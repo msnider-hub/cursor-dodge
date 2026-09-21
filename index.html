@@ -1,0 +1,4170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A mouse-only arena dodger: twenty rounds, two bosses, and one purple cube with opinions.">
+<title>Cursor Dodge</title>
+<!-- Inline so a hosted copy is still one file plus its sounds, and so a visitor's
+     automatic /favicon.ico request is answered rather than logged as a 404. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d1117'/><rect x='8' y='8' width='13' height='13' rx='2' fill='%23c07cff'/><circle cx='24' cy='24' r='3.5' fill='%234cc2ff'/></svg>">
+<style>
+  :root{
+    --bg:#0d1117;
+    --panel:#161b22;
+    --line:#26303d;
+    --text:#e6edf3;
+    --muted:#8b98a5;
+    --accent:#4cc2ff;
+    --danger:#ff5c5c;
+    --hot:#ffb64c;
+    --cube:#9aa4af;
+    --orb:#c07cff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  /* so the native form controls — the volume slider especially — come up dark */
+  html{color-scheme:dark}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 600px at 50% -10%, #16202b 0%, var(--bg) 60%);
+    color:var(--text);
+    font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:20px;
+  }
+  .wrap{
+    display:grid;
+    grid-template-columns:auto 260px;
+    grid-template-areas:"head head" "stage board";
+    gap:16px;
+    max-width:100%;
+  }
+  header{grid-area:head;display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+  h1{
+    margin:0;font-size:20px;letter-spacing:.28em;font-weight:600;
+    text-transform:uppercase;
+  }
+  h1 span{color:var(--accent)}
+  .hud{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .stat{
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:6px 11px;min-width:84px;text-align:right;
+  }
+  .stat.wide{min-width:104px}
+  .stat .label{display:block;font-size:10px;letter-spacing:.18em;color:var(--muted)}
+  .stat .value{
+    font:600 20px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;
+    font-variant-numeric:tabular-nums;
+  }
+  .stat.music{min-width:150px;transition:border-color .15s}
+  .stat.music:hover{border-color:var(--accent)}
+  .stat.music .mrow{display:flex;align-items:center;justify-content:flex-end;gap:9px}
+  .stat.music button{
+    background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer;
+    min-width:32px;text-align:left;transition:color .15s;
+  }
+  .stat.music button:hover .value{color:var(--accent)}
+  .stat.music .value{font-size:15px;line-height:1.6}
+  .stat.music.off .value{color:var(--muted)}
+  /* left native on purpose: accent-color and a dark scheme are enough, and a
+     half-restyled range control is worse than an honest one */
+  #volRange{width:76px;height:14px;margin:0;cursor:pointer;accent-color:var(--accent)}
+  .stat.music.off #volRange{opacity:.45}
+  #score{color:var(--hot)}
+  #timer{color:var(--accent)}
+  #round{color:var(--orb)}
+  #round.boss{color:var(--danger)}
+  .lives{letter-spacing:3px;font-size:19px}
+  .lives .on{color:var(--danger)}
+  .lives .off{color:#2b3440}
+
+  .stage{grid-area:stage;position:relative;line-height:0}
+  canvas{
+    display:block;
+    background:#10161d;
+    border:1px solid var(--line);
+    border-radius:10px;
+    max-width:100%;
+    height:auto;
+    touch-action:none;
+  }
+  .stage.playing canvas{cursor:none}
+  .stage.hit canvas{animation:flash .45s ease-out}
+  .stage.ouch canvas{animation:ouch .32s ease-out}
+  @keyframes flash{
+    0%{box-shadow:0 0 0 0 rgba(255,92,92,.9),0 0 60px 10px rgba(255,92,92,.35) inset}
+    100%{box-shadow:0 0 0 0 rgba(255,92,92,0)}
+  }
+  @keyframes ouch{
+    0%{box-shadow:0 0 0 0 rgba(255,92,92,.8),0 0 40px 6px rgba(255,92,92,.30) inset}
+    100%{box-shadow:0 0 0 0 rgba(255,92,92,0)}
+  }
+
+  .overlay{
+    position:absolute;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(9,13,18,.82);
+    backdrop-filter:blur(3px);
+    border-radius:10px;
+    line-height:1.5;
+    text-align:center;
+    padding:24px;
+  }
+  .overlay[hidden]{display:none}
+  .card{max-width:470px}
+  .card h2{margin:0 0 6px;font-size:24px;letter-spacing:.06em}
+  .card p{margin:0 0 14px;color:var(--muted)}
+  .result{
+    font:700 56px/1 ui-monospace,SFMono-Regular,Consolas,monospace;
+    font-variant-numeric:tabular-nums;
+    color:var(--hot);margin:4px 0 2px;
+  }
+  .result small{font-size:20px;color:var(--muted);font-weight:400}
+  .breakdown{
+    color:var(--muted);font:12px/1.6 ui-monospace,monospace;margin-bottom:8px;
+  }
+  .verdict{color:var(--text);margin-bottom:16px;min-height:21px}
+  .row{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap}
+  input[type=text]{
+    background:#0d1319;border:1px solid var(--line);border-radius:8px;
+    color:var(--text);padding:9px 12px;font:inherit;width:170px;text-align:center;
+  }
+  input[type=text]:focus{outline:none;border-color:var(--accent)}
+  button{
+    font:600 14px/1 inherit;letter-spacing:.04em;
+    background:var(--accent);color:#05202e;border:0;border-radius:8px;
+    padding:11px 20px;cursor:pointer;
+  }
+  button:hover{filter:brightness(1.1)}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  button.ghost:hover{color:var(--text);border-color:var(--muted);filter:none}
+  .hint{margin-top:14px;font-size:12px;color:var(--muted)}
+  .rules{
+    text-align:left;margin:0 0 16px;padding:0;list-style:none;
+    font-size:12.5px;color:var(--muted);
+  }
+  .rules li{padding:2px 0}
+  .rules b{color:var(--text);font-weight:600}
+  kbd{
+    background:#0d1319;border:1px solid var(--line);border-bottom-width:2px;
+    border-radius:4px;padding:1px 5px;font:600 11px/1 ui-monospace,monospace;
+  }
+
+  .board{
+    grid-area:board;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:14px;align-self:start;
+  }
+  .board h3{
+    margin:0 0 10px;font-size:11px;letter-spacing:.2em;color:var(--muted);
+    text-transform:uppercase;display:flex;justify-content:space-between;align-items:center;
+  }
+  .board h3 button{
+    background:none;color:var(--muted);border:0;padding:0;font-size:11px;
+    letter-spacing:.1em;cursor:pointer;
+  }
+  .board h3 button:hover{color:var(--danger);filter:none}
+  ol{list-style:none;margin:0;padding:0;counter-reset:rank}
+  ol li{
+    counter-increment:rank;
+    display:grid;grid-template-columns:20px 1fr auto;gap:8px;align-items:baseline;
+    padding:6px 0;border-top:1px solid var(--line);
+  }
+  ol li:first-child{border-top:0}
+  ol li::before{content:counter(rank);color:var(--muted);font-size:11px;text-align:right}
+  ol li .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  ol li .t{font:600 13px/1 ui-monospace,monospace;font-variant-numeric:tabular-nums;color:var(--muted)}
+  ol li.fresh{color:var(--hot)}
+  ol li.fresh .t{color:var(--hot)}
+  ol li:nth-child(1) .t{color:var(--text)}
+  ol li.empty{grid-template-columns:1fr;color:var(--muted);font-size:12px;padding:4px 0}
+  ol li.empty::before{content:none}
+
+  @media (max-width:1000px){
+    .wrap{grid-template-columns:1fr;grid-template-areas:"head" "stage" "board"}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Cursor <span>Dodge</span></h1>
+    <div class="hud">
+      <div class="stat wide"><span class="label">SCORE</span><span class="value" id="score">0</span></div>
+      <div class="stat"><span class="label">ROUND</span><span class="value" id="round">—</span></div>
+      <div class="stat"><span class="label">TIME</span><span class="value" id="timer">0.00</span></div>
+      <div class="stat wide"><span class="label">BEST</span><span class="value" id="best">—</span></div>
+      <div class="stat"><span class="label">LIVES</span><span class="value lives" id="lives"></span></div>
+      <div class="stat music" id="musicStat">
+        <span class="label">SOUND</span>
+        <span class="mrow">
+          <button id="muteBtn" title="Mute sound (M)"><span class="value" id="muteVal">ON</span></button>
+          <input type="range" id="volRange" min="0" max="100" step="1" value="30"
+                 title="Sound volume (- and + during play)" aria-label="Sound volume">
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <audio id="bgm" src="sounds/BG_infernoplex_dimrain47.mp3" loop preload="auto"></audio>
+  <audio id="bgmBoss" src="sounds/BG_boss_music.mp3" loop preload="auto"></audio>
+
+  <div class="stage" id="stage">
+    <canvas id="game" width="900" height="600"></canvas>
+
+    <div class="overlay" id="startScreen">
+      <div class="card">
+        <h2>Hug the violet cube</h2>
+        <p>Move your mouse to steer the marker. Starting <b>captures your mouse</b>, so the marker can never be lost off the edge of the arena &mdash; <kbd>Esc</kbd> gives it back and ends the game.</p>
+        <ul class="rules">
+          <li><b>The violet cube</b> is always out there, drifting. Hug it &mdash; without touching it &mdash; and your score and multiplier climb. The nearer you dare, the faster: the glow around it is the payout, and it thins out fast. Stray off it and the multiplier burns down.</li>
+          <li><b>Lives</b> &mdash; each touch costs one heart; lose all three and the game ends.</li>
+          <li><b>20 rounds</b>, 20&ndash;30 s each: walls, four corners, rocket barrage, spiral, clockwork, mini hunters, half the stage &mdash; and every fifth round is a boss, the closing box or the hunter. Each five come back harder.</li>
+        </ul>
+        <div class="row">
+          <input type="text" id="nameInput" maxlength="12" placeholder="Your name" autocomplete="off" spellcheck="false">
+          <button id="startBtn">Start</button>
+        </div>
+        <div class="hint">Press <kbd>Enter</kbd> to start &middot; <kbd>&minus;</kbd><kbd>+</kbd> volume &middot; <kbd>M</kbd> mute &middot; <kbd>Esc</kbd> to bail out</div>
+      </div>
+    </div>
+
+    <div class="overlay" id="overScreen" hidden>
+      <div class="card">
+        <h2 id="overTitle">Game over</h2>
+        <div class="result"><span id="finalScore">0</span><small>pts</small></div>
+        <div class="breakdown" id="breakdown"></div>
+        <div class="verdict" id="verdict"></div>
+        <div class="row">
+          <button id="againBtn">Play again</button>
+          <button class="ghost" id="changeBtn">Change name</button>
+        </div>
+        <div class="hint">Press <kbd>Enter</kbd> to play again</div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="board">
+    <h3>Leaderboard <button id="clearBtn" title="Delete all saved scores">clear</button></h3>
+    <ol id="boardList"></ol>
+  </aside>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- setup ----------
+  const canvas   = document.getElementById('game');
+  const ctx      = canvas.getContext('2d');
+  const stage    = document.getElementById('stage');
+  const scoreEl  = document.getElementById('score');
+  const timerEl  = document.getElementById('timer');
+  const roundEl  = document.getElementById('round');
+  const bestEl   = document.getElementById('best');
+  const livesEl  = document.getElementById('lives');
+  const startScreen = document.getElementById('startScreen');
+  const overScreen  = document.getElementById('overScreen');
+  const nameInput   = document.getElementById('nameInput');
+  const overTitleEl  = document.getElementById('overTitle');
+  const finalScoreEl = document.getElementById('finalScore');
+  const breakdownEl  = document.getElementById('breakdown');
+  const verdictEl    = document.getElementById('verdict');
+  const boardList    = document.getElementById('boardList');
+  const bgm          = document.getElementById('bgm');
+  const bgmBoss      = document.getElementById('bgmBoss');
+  const muteBtn      = document.getElementById('muteBtn');
+  const muteVal      = document.getElementById('muteVal');
+  const musicStat    = document.getElementById('musicStat');
+  const volRange     = document.getElementById('volRange');
+
+  const W = canvas.width, H = canvas.height;
+  const TAU = Math.PI * 2;
+  const PLAYER_R = 9;
+  const MAX_CUBES = 26;        // ceiling on the traffic layer alone — see spawnCube
+
+  // Lives
+  const MAX_LIVES = 3;
+  const INVULN    = 2.0;       // seconds of ghosting after a hit
+
+  // Scoring: time survived plus a big bonus for hugging the prize cube.
+  const SURVIVE_PPS  = 10;     // points per second just for being alive
+  const PROX_PPS     = 60;     // extra points per second at point-blank range
+  const NEAR_BAND    = 155;    // px from the prize cube that counts as "near"
+  const MULT_MAX     = 12;
+  // Growth is deliberately top-heavy: full value only at point-blank range, and
+  // it falls away exponentially toward the edge of the band, where it reaches
+  // zero. There is no line to stand on — the closer you dare, the faster it runs.
+  // Still top-heavy, but less of a cliff than it was (155 px of band at ^1.9,
+  // where it used to be 120 at ^2.4): the far half of the band now pays enough to
+  // be worth standing in, so there is a reason to shadow the cube from a distance
+  // you can actually hold while a round is busy, instead of it being point-blank
+  // or nothing.
+  const MULT_GAIN    = 2.00;   // multiplier growth per second hugging a face
+  const MULT_CURVE   = 1.90;   // how sharply that collapses on the way out
+  const MULT_GRACE   = 0.75;   // seconds off the prize before the multiplier drops
+  const MULT_DECAY   = 4.20;   // multiplier lost per second once grace runs out
+
+  // The prize cube: one special cube is always adrift somewhere in the arena, and
+  // it is the *only* thing that pays proximity points or feeds the multiplier. It
+  // is still a cube, so the game becomes "stay on it without touching it, whatever
+  // else is being thrown at you". It keeps itself inside whatever safe pocket an
+  // event carves out, so chasing it is always possible.
+  const ORB_SIZE  = 34;
+  const ORB_SPEED = 122;       // px/s of drift, quicker in later cycles
+  const ORB_TURN  = 2.4;       // how hard it steers onto its next waypoint
+  const ORB_REAIM = 1.7;       // seconds between waypoints
+  const ORB_SCARE = 40;        // px of clearance at which a passing cube startles it
+  const ORB_HOP   = 150;       // px/s of flinch away from whatever came that close
+  const ORB_CLING = 0.5;       // how far a cube that is being ignored drifts your way
+
+  // The rescue cube. Once a heart is gone, a gold cube turns up a few seconds
+  // later carrying a countdown: hold the marker beside it until the count runs out
+  // and the heart comes back. It drifts — and bites — exactly like the prize cube,
+  // so a rescue is a second thing to hug while the round is still trying to kill
+  // you. One chance per round, and it leaves with the round whether taken or not.
+  const HEART_DELAY = 6.0;     // seconds after losing a heart before it turns up
+  const HEART_COUNT = 9;       // seconds of staying beside it that buy the heart
+  const HEART_BAND  = 150;     // px of clearance that count as "beside it"
+  const HEART_SLIP  = 0.5;     // how fast the count creeps back once you leave
+  const HEART_FADE  = 0.6;     // it materialises before it can bite or be banked
+  const HEART_TIGHT = 2.2;     // seconds of daylight left at which it starts fretting
+  const HEART_LEAVE = 1.6;     // …and how long it takes to give up and go
+
+  // Mouse capture. With the pointer locked the marker is driven by raw movement,
+  // which keeps it inside the arena no matter how far the mouse travels: there is
+  // no system cursor parked out on the desktop for it to be pinned against.
+  // Absolute tracking is the fallback when the lock is refused, and what the test
+  // tools use, since a headless browser will not grant one.
+  const USE_POINTER_LOCK = true;
+
+  // Rounds. Each one is a single event type on repeat for 20–30 s. The first
+  // eight are a fixed tour of every event there is; after that the schedule is
+  // drawn at random. Every fifth round is the boss. Twenty rounds and the game is
+  // over — cleared rather than survived.
+  const ROUND_MIN   = 20, ROUND_MAX = 30;   // seconds of waves per round
+  const MAX_ROUNDS  = 20;
+  const ROUND_BREAK = 2.6;     // breather between rounds
+  const BOSS_BREAK  = 4.4;     // …and a longer one, to announce a boss in
+  const BOSS_EVERY  = 5;       // every fifth round is the boss, and closes a cycle
+
+  const STORE_KEY = 'cursor-dodge.scores.v2';
+  const OLD_KEY   = 'cursor-dodge.scores';   // times-only board from before scoring
+  const NAME_KEY  = 'cursor-dodge.name';
+  const MUTE_KEY  = 'cursor-dodge.muted';
+  const VOL_KEY   = 'cursor-dodge.vol';
+  const BOARD_MAX = 10;
+  const MUSIC_VOL = 0.30;      // starting volume; the HUD slider overrides it
+  const VOL_STEP  = 0.05;      // how much - and + move it
+
+  // Render at device resolution for crisp edges.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = 'auto';   // CSS max-width can shrink it; ratio is kept
+  ctx.scale(dpr, dpr);
+
+  const rand  = (min, max) => min + Math.random() * (max - min);
+  const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+  const pick  = arr => arr[(Math.random() * arr.length) | 0];
+  const ease  = p => p * p * (3 - 2 * p);
+  const fmt   = n => Math.round(n).toLocaleString('en-US');
+
+  // ---------- state ----------
+  const STATE = { MENU: 0, PLAYING: 1, OVER: 2 };
+  let state = STATE.MENU;
+  let cubes = [];
+  let trail = [];
+  let elapsed = 0;          // seconds survived this round
+  let score = 0;
+  let spawnTimer = 0;
+  let lastFrame = 0;
+  let lives = MAX_LIVES;
+  let invuln = 0;
+  let shake = 0;
+  let player = { x: W / 2, y: H / 2, has: false };
+  let cursor = { x: W / 2, y: H / 2 };   // raw pointer position, arena space
+  let locked  = false;           // pointer captured: marker moves by raw deltas
+  let freshEntry = null;   // id of the row to highlight on the board
+
+  // A held pair of keys that turns the hits off, for walking an event to look at
+  // it rather than to survive it. Deliberately unlisted: the hold is long enough
+  // that nobody finds it by mashing, and once it is on the marker's colour says so.
+  const DEV_KEYS = ['KeyD', 'KeyF'];
+  const DEV_HOLD = 5;        // seconds both have to be down together
+  const devDown = new Set();
+  let devMode = false;
+  let devHold = 0;
+
+  function devTick(dt) {
+    if (devMode) return;
+    // Either key coming up puts the count back to nothing, so the five seconds
+    // have to be one unbroken press of both.
+    if (!DEV_KEYS.every(k => devDown.has(k))) { devHold = 0; return; }
+    devHold += dt;
+    if (devHold >= DEV_HOLD) devMode = true;
+  }
+
+  // multiplier
+  let mult = 1;
+  let bestMult = 1;
+  let graceT = 0;          // seconds since the marker was last near the prize
+  let prox = 0;            // 0..1 closeness to the prize cube's surface
+  let multPop = null;      // { text, t } tier-up flourish
+  let orb = null;          // the prize cube, always in play
+
+  // the rescue cube
+  let heartCube = null;    // the gold cube, while one is out
+  let heartWait = 0;       // seconds owed since a heart was lost
+  let heartUsed = false;   // this round's one chance, taken or missed
+
+  // rounds and their waves
+  let roundNo = 0;         // 1..MAX_ROUNDS
+  let roundT = 0;          // seconds into the current round
+  let roundLen = 0;        // how long this round's waves keep coming
+  let live = false;        // false during the breather between rounds
+  let breakT = 0;
+  let waveGap = 0;         // countdown to the next wave of this round's event
+  let waveNo = 0;          // waves fired this round
+  let cleared = false;     // all MAX_ROUNDS rounds finished
+  let activeEvent = null;
+  let lastWallDir = null;  // so a series of walls doesn't repeat a side
+  let banner = null;       // { text, sub, t, t0, good }
+
+  // ---------- leaderboard ----------
+  function loadScores() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORE_KEY) || '[]');
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .filter(s => s && typeof s.score === 'number' && isFinite(s.score))
+        .map(s => ({
+          id: s.id || String(Math.random()),
+          name: String(s.name || 'Anon').slice(0, 12),
+          score: s.score,
+          time: typeof s.time === 'number' ? s.time : 0,
+          mult: typeof s.mult === 'number' ? s.mult : 1,
+          at: s.at || null
+        }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, BOARD_MAX);
+    } catch { return []; }
+  }
+  function saveScores(list) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); } catch {}
+  }
+
+  let scores = loadScores();
+
+  function renderBoard() {
+    boardList.innerHTML = '';
+    if (!scores.length) {
+      boardList.innerHTML = '<li class="empty">No scores yet &mdash; play a round.</li>';
+    } else {
+      for (const s of scores) {
+        const li = document.createElement('li');
+        if (s.id === freshEntry) li.className = 'fresh';
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = s.name;
+        const bits = [`${s.time.toFixed(2)}s survived`, `best ×${s.mult.toFixed(1)}`];
+        if (s.at) bits.push(new Date(s.at).toLocaleString());
+        who.title = bits.join(' · ');
+        const t = document.createElement('span');
+        t.className = 't';
+        t.textContent = fmt(s.score);
+        li.append(who, t);
+        boardList.append(li);
+      }
+    }
+    bestEl.textContent = scores.length ? fmt(scores[0].score) : '—';
+  }
+
+  // Returns the placement (1-based) if the score made the board, else 0.
+  function submitScore(pts, time, topMult) {
+    const name = (nameInput.value.trim() || 'Anon').slice(0, 12);
+    try { localStorage.setItem(NAME_KEY, name); } catch {}
+    const entry = {
+      id: 'e' + Date.now() + Math.random().toString(36).slice(2, 7),
+      name, score: Math.round(pts), time, mult: topMult, at: Date.now()
+    };
+    const merged = [...scores, entry].sort((a, b) => b.score - a.score).slice(0, BOARD_MAX);
+    const rank = merged.findIndex(s => s.id === entry.id);
+    scores = merged;
+    saveScores(scores);
+    freshEntry = rank === -1 ? null : entry.id;
+    renderBoard();
+    return rank === -1 ? 0 : rank + 1;
+  }
+
+  function renderRound() {
+    const boss = isBoss(roundNo);
+    roundEl.textContent = roundNo >= 1 ? roundNo + '/' + MAX_ROUNDS + (boss ? ' ☠' : '') : '—';
+    roundEl.classList.toggle('boss', boss);
+  }
+
+  function renderLives() {
+    let html = '';
+    for (let i = 0; i < MAX_LIVES; i++) html += `<span class="${i < lives ? 'on' : 'off'}">&hearts;</span>`;
+    livesEl.innerHTML = html;
+  }
+
+  // ---------- input ----------
+  function pointFromEvent(e) {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - r.left) * (W / r.width),
+      y: (e.clientY - r.top)  * (H / r.height)
+    };
+  }
+  // The marker is the pointer, clamped to the arena — there is nothing else in
+  // the way of it, so steering is 1:1 and never has anything to catch up on.
+  function syncPlayer() {
+    player.x = clamp(cursor.x, 0, W);
+    player.y = clamp(cursor.y, 0, H);
+  }
+
+  // Absolute tracking: the marker goes wherever the system cursor is.
+  function movePlayer(e) {
+    if (locked) return;                 // captured mode reads raw movement instead
+    const p = pointFromEvent(e);
+    cursor.x = clamp(p.x, 0, W);
+    cursor.y = clamp(p.y, 0, H);
+    syncPlayer();
+    player.has = true;
+  }
+
+  // Captured tracking: the marker *is* the cursor, moved by raw mouse deltas.
+  function moveLocked(e) {
+    const s = W / (canvas.getBoundingClientRect().width || W);
+    const dx = (e.movementX || 0) * s, dy = (e.movementY || 0) * s;
+    if (!dx && !dy) return;
+    cursor.x = clamp(cursor.x + dx, 0, W);
+    cursor.y = clamp(cursor.y + dy, 0, H);
+    syncPlayer();
+    player.has = true;
+  }
+
+  // ---------- mouse capture ----------
+  function lockPointer() {
+    if (!USE_POINTER_LOCK || !canvas.requestPointerLock) return;
+    try {
+      const r = canvas.requestPointerLock();
+      if (r && r.catch) r.catch(() => {});      // refused: absolute tracking stays
+    } catch {}
+  }
+  function releasePointer() {
+    if (document.pointerLockElement === canvas) document.exitPointerLock();
+  }
+  document.addEventListener('pointerlockchange', () => {
+    locked = document.pointerLockElement === canvas;
+    if (locked) syncPlayer();
+    else if (state === STATE.PLAYING) endRound();   // Esc frees the mouse: bail out
+  });
+  document.addEventListener('pointerlockerror', () => { locked = false; });
+
+  canvas.addEventListener('mousemove', movePlayer);
+  document.addEventListener('mousemove', e => { if (locked) moveLocked(e); });
+  canvas.addEventListener('pointermove', e => { if (e.pointerType !== 'mouse') movePlayer(e); });
+  canvas.addEventListener('touchmove', e => { e.preventDefault(); movePlayer(e.touches[0]); }, { passive: false });
+
+  document.getElementById('startBtn').addEventListener('click', startRound);
+  document.getElementById('againBtn').addEventListener('click', startRound);
+  document.getElementById('changeBtn').addEventListener('click', showMenu);
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    if (!scores.length) return;
+    if (confirm('Delete all saved scores?')) {
+      scores = [];
+      freshEntry = null;
+      saveScores(scores);
+      try { localStorage.removeItem(OLD_KEY); } catch {}
+      renderBoard();
+    }
+  });
+
+  window.addEventListener('keydown', e => {
+    if (DEV_KEYS.includes(e.code) && e.target !== nameInput) devDown.add(e.code);
+    if (e.code === 'Space') {
+      // Space does nothing now, but it is still swallowed: left alone it scrolls
+      // the arena off-screen, and re-fires whichever button last had focus.
+      if (e.target === nameInput) return;     // let the name field keep its spaces
+      e.preventDefault();
+    } else if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+      if (state !== STATE.PLAYING) { e.preventDefault(); startRound(); }
+    } else if (e.code === 'Escape' && state === STATE.PLAYING) {
+      endRound();
+    } else if (e.code === 'KeyM') {
+      if (e.target === nameInput) return;       // let the name field type an M
+      toggleMute();
+    } else if (e.key === '-' || e.key === '_' || e.key === '+' || e.key === '=') {
+      // Volume from the keyboard, because a captured pointer can't reach the slider.
+      if (e.target === nameInput) return;
+      setVol(musicVol + (e.key === '-' || e.key === '_' ? -VOL_STEP : VOL_STEP));
+    }
+  });
+  window.addEventListener('keyup', e => devDown.delete(e.code));
+  // A key held while the window loses focus never reports its release, so drop
+  // the lot rather than leave a phantom press counting up.
+  window.addEventListener('blur', () => devDown.clear());
+
+  // ---------- music ----------
+  // Two looping tracks: the ordinary one, and the hunter boss's. Only ever one of
+  // them is audible — `track` is whichever that is — and mute, the slider and the
+  // fade all reach both, so a swap mid-fight can never leave the other one running
+  // underneath. Playback starts on the Start click, which is the gesture browsers
+  // want; if it is refused anyway the game just runs silent.
+  const TRACKS = [bgm, bgmBoss];
+  let track = bgm;
+  let muted = false;
+  let musicVol = MUSIC_VOL;
+  try { muted = localStorage.getItem(MUTE_KEY) === '1'; } catch {}
+  try {
+    const v = parseFloat(localStorage.getItem(VOL_KEY));
+    if (isFinite(v)) musicVol = clamp(v, 0, 1);
+  } catch {}
+
+  function renderMute() {
+    for (const el of TRACKS) el.muted = muted;
+    muteVal.textContent = muted ? 'OFF' : 'ON';
+    musicStat.classList.toggle('off', muted);
+  }
+  // The slider is the one control that is live outside a game *and* during one,
+  // since under mouse capture there is no pointer left to drag it with — hence the
+  // - and + keys, which drive the same setter.
+  function renderVol() {
+    volRange.value = String(Math.round(musicVol * 100));
+    // Mid-fade a track's volume belongs to the fade, not to the slider.
+    for (const el of TRACKS) if (!el.fadeT) el.volume = musicVol;
+  }
+  function setVol(v) {
+    const up = v > musicVol;
+    musicVol = clamp(v, 0, 1);
+    try { localStorage.setItem(VOL_KEY, musicVol.toFixed(3)); } catch {}
+    // Turning it up past mute means you want to hear it; turning it down doesn't.
+    if (muted && up && musicVol > 0) { muted = false; renderMute(); }
+    renderVol();
+  }
+  function playMusic(el = bgm) {
+    track = el;
+    for (const other of TRACKS) if (other !== el) fadeOut(other);
+    if (el.fadeT) { clearTimeout(el.fadeT); el.fadeT = null; }
+    el.volume = musicVol;
+    try { el.currentTime = 0; } catch {}
+    const p = el.play();
+    if (p && p.catch) p.catch(() => {});
+  }
+  // Changing track at a round boundary. The one going out fades rather than cutting,
+  // and the one coming in opens at its own beginning: a boss theme joined halfway
+  // through its own build-up announces nothing.
+  function switchTrack(el) {
+    if (track === el) return;
+    playMusic(el);
+  }
+  function fadeOut(el) {
+    if (el.paused) return;
+    if (el.fadeT) clearTimeout(el.fadeT);
+    // A tenth of the way down per step, so a quiet track fades over the same
+    // half-second a loud one does instead of cutting out at once.
+    const drop = Math.max(0.015, el.volume * 0.1);
+    const step = () => {
+      el.volume = Math.max(0, el.volume - drop);
+      if (el.volume > 0.005) { el.fadeT = setTimeout(step, 55); return; }
+      el.pause();
+      el.fadeT = null;
+      el.volume = musicVol;
+    };
+    step();
+  }
+  function fadeMusic() { for (const el of TRACKS) fadeOut(el); }
+  function toggleMute() {
+    muted = !muted;
+    try { localStorage.setItem(MUTE_KEY, muted ? '1' : '0'); } catch {}
+    renderMute();
+    if (muted) quipSay('muted');       // the cube takes it personally
+  }
+  muteBtn.addEventListener('click', toggleMute);
+  volRange.addEventListener('input', () => setVol(volRange.value / 100));
+  renderMute();
+  renderVol();
+
+  // ---------- sound effects ----------
+  // Seven cues and no more: a heart lost, the run ending, a hunter arriving, a round
+  // cleared — which the siege borrows for each life it takes off its boss, being the
+  // same small win — a rocket leaving, and a hunter's own two: the charge that says a
+  // volley is coming, and each cube of that volley going. Everything else in the arena
+  // is telegraphed on the canvas and stays that way — a cue for every cube would drown
+  // the seven that matter.
+  //
+  // They ride the same mute and the same slider the music does. There is one audio
+  // control in the HUD (hence SOUND rather than MUSIC on it), and a player who turns
+  // it off means all of it. Each cue carries its own level on top of that, because it
+  // has to be heard over a track sitting at a deliberately modest 30 %.
+  //
+  // A cue is often asked for again before the last one has finished — a barrage fires
+  // every fifth of a second, and a volley leaves every eighth — so each one is a
+  // small ring of elements played in turn rather than one element rewound.
+  // Rewinding would cut the shot before it short, which is exactly what a barrage
+  // must not do. The ring is sized to how many can overlap, and nothing here is on
+  // the game's critical path: a file that will not load, or a browser that refuses to
+  // play it, leaves the game running silent rather than throwing.
+  const SFX = {
+    hit:    { src: 'sounds/FX_hit.mp3',            mix: 2.2, voices: 2 },
+    over:   { src: 'sounds/FX_gameover.mp3',       mix: 2.0, voices: 1 },
+    hunter: { src: 'sounds/FX_hunterspawn.mp3',    mix: 1.8, voices: 3 },
+    clear:  { src: 'sounds/FX_level_complete.mp3', mix: 2.0, voices: 1 },
+    rocket: { src: 'sounds/FX_rocket.mp3',         mix: 1.2, voices: 3 },
+    // The hunter's two. These are the most repetitive sounds in the game — a boss
+    // volley is up to six cubes 0.13 s apart and comes round every 1.25 s — so they
+    // deliberately sit under the rocket rather than level with it. Rings are sized the
+    // same way as the rest: the charge runs a second against a 0.6 s tell and there can
+    // be three bodies on the stage charging on their own clocks, and a shot is 0.34 s
+    // long against shots 0.13 s apart, so a volley keeps three of them in the air.
+    charge: { src: 'sounds/FX_chargeup.mp3',       mix: 0.9, voices: 3 },
+    shot:   { src: 'sounds/FX_shot.mp3',           mix: 1.0, voices: 4 }
+  };
+  for (const k in SFX) {
+    const s = SFX[k];
+    s.ring = [];
+    s.at = 0;
+    for (let i = 0; i < s.voices; i++) {
+      try {
+        const a = new Audio(s.src);
+        a.preload = 'auto';
+        s.ring.push(a);
+      } catch {}
+    }
+  }
+  function sfx(key) {
+    const s = SFX[key];
+    if (!s || !s.ring.length || muted || musicVol <= 0) return;
+    const a = s.ring[s.at];
+    s.at = (s.at + 1) % s.ring.length;
+    try {
+      a.volume = clamp(musicVol * s.mix, 0, 1);
+      a.currentTime = 0;
+      const p = a.play();
+      if (p && p.catch) p.catch(() => {});
+    } catch {}
+  }
+
+  // ---------- round flow ----------
+  function resetRound() {
+    cubes = [];
+    trail = [];
+    elapsed = 0;
+    score = 0;
+    lives = MAX_LIVES;
+    invuln = 0;
+    shake = 0;
+    mult = 1; bestMult = 1; graceT = 0; prox = 0; multPop = null;
+    orb = null;
+    heartCube = null; heartWait = 0; heartUsed = false;
+    activeEvent = null;
+    siege = null;
+    clearProwlers();
+    awayT = 0; idler = null; lonely = 0; lonelyT = 0;
+    quipReset();
+    roundNo = 0; roundT = 0; roundLen = 0; waveGap = 0; waveNo = 0;
+    live = false; breakT = 0; cleared = false;
+    schedule = buildSchedule();      // a fresh draw for the back half of the game
+    lastWallDir = null;
+    cornerCard = false;
+    banner = null;
+    scoreEl.textContent = '0';
+    timerEl.textContent = '0.00';
+    renderRound();
+    renderLives();
+  }
+
+  function showMenu() {
+    state = STATE.MENU;
+    releasePointer();
+    fadeMusic();
+    stage.classList.remove('playing', 'hit', 'ouch');
+    overScreen.hidden = true;
+    startScreen.hidden = false;
+    resetRound();
+    nameInput.focus();
+    nameInput.select();
+    draw();
+  }
+
+  function startRound() {
+    state = STATE.PLAYING;
+    startScreen.hidden = true;
+    overScreen.hidden = true;
+    stage.classList.add('playing');
+    stage.classList.remove('hit', 'ouch');
+    resetRound();
+    spawnTimer = 1.0;          // breather before the first cube
+    freshEntry = null;
+    renderBoard();
+    lockPointer();             // this click is the gesture that allows it
+    playMusic();
+    if (!player.has || USE_POINTER_LOCK) { cursor.x = W / 2; cursor.y = H / 2; }
+    syncPlayer();
+    spawnOrb();
+    beginRound(1);
+    nameInput.blur();
+  }
+
+  function takeHit() {
+    lives--;
+    sfx('hit');                // …and the last one lands under the game-over cue
+    renderLives();
+    mult = 1; graceT = MULT_GRACE; multPop = null;
+    invuln = INVULN;
+    shake = 0.35;
+    if (lives <= 0) { endRound(); return; }
+    stage.classList.remove('ouch');
+    void stage.offsetWidth;    // restart the flash animation
+    stage.classList.add('ouch');
+  }
+
+  function endRound() {
+    state = STATE.OVER;          // set first: releasing the mouse re-enters here
+    releasePointer();
+    fadeMusic();
+    // Only a run that actually ran out of hearts gets the game-over cue. Bailing out
+    // with Esc is a decision, not a defeat, and clearing all twenty already has the
+    // round-cleared fanfare on it — a sting over either would be telling the player
+    // something the screen in front of them contradicts.
+    if (lives <= 0) sfx('over');
+    stage.classList.remove('playing');
+    const time = elapsed, pts = score, topMult = bestMult;
+    // A round only counts as reached, not cleared, unless you got through it —
+    // and during a breather the round you just finished does count.
+    const done = cleared ? MAX_ROUNDS : Math.max(0, live ? roundNo - 1 : roundNo);
+    const how = cleared ? 'all rounds cleared' : lives > 0 ? 'bailed out' : 'out of lives';
+    overTitleEl.textContent = cleared ? 'You cleared it' : 'Game over';
+    finalScoreEl.textContent = fmt(pts);
+    breakdownEl.textContent =
+      `${done}/${MAX_ROUNDS} rounds · ${time.toFixed(2)}s · peak ×${topMult.toFixed(1)} · ${how}`;
+
+    const prevBest = scores.length ? scores[0].score : 0;
+    const rank = submitScore(pts, time, topMult);
+
+    if (cleared)                         verdictEl.textContent = `All ${MAX_ROUNDS} rounds down. Nothing left to throw at you.`;
+    else if (rank === 1 && prevBest > 0) verdictEl.textContent = `New record — beat ${fmt(prevBest)} pts!`;
+    else if (rank === 1)                 verdictEl.textContent = 'First score on the board!';
+    else if (rank)                       verdictEl.textContent = `#${rank} on the leaderboard.`;
+    else                                 verdictEl.textContent = `Best so far is ${fmt(prevBest)} pts.`;
+
+    stage.classList.add('hit');
+    overScreen.hidden = false;
+  }
+
+  // ---------- cubes ----------
+  function pushCube(c) {
+    if (c.shade === undefined) c.shade = rand(0.82, 1.08);
+    cubes.push(c);
+    return c;
+  }
+
+  // Ambient cubes are scenery with teeth. Most rounds have none at all — the
+  // round's own event is the whole job — and their rate is set by the cycle you
+  // are on rather than by the clock.
+  function difficulty() {
+    const T = tier();
+    return {
+      interval: Math.max(0.28, 0.72 - T * 0.11),
+      speedMul: 1 + T * 0.20,
+      burst: T >= 2 ? 2 : 1
+    };
+  }
+
+  // How much ambient traffic this round wants: its own setting, plus a sprinkle
+  // in every round once the cycles get late.
+  //
+  // A round marked `calm` is left out of that sprinkle as well as asking for none of
+  // its own, which is the whole difference between the two ways of writing zero here:
+  // `ambient: 0` is "nothing extra, until the late cycles want some", and `calm` is
+  // "nothing, ever". A round whose own furniture is the entire round wants the second.
+  function ambientRate() {
+    const cfg = roundCfg();
+    if (!cfg || cfg.calm) return 0;
+    return cfg.ambient || (tier() >= 2 ? 0.45 : 0);
+  }
+
+  function spawnAmbient(d) {
+    const n = 1 + (Math.random() < 0.5 ? d.burst - 1 : 0);
+    for (let i = 0; i < n; i++) spawnCube();
+  }
+
+  function spawnCube() {
+    // The cap counts the traffic layer only. An event with a lot of bodies of its own
+    // would otherwise starve the scenery the round was configured to have — the
+    // clockwork dial is 26 cubes by itself, which used to mean a round asking for busy
+    // traffic got none at all until the dial was spent.
+    let amb = 0;
+    for (const c of cubes) if (c.amb) amb++;
+    if (amb >= MAX_CUBES) return;
+    const d = difficulty();
+    const size  = rand(22, 56);
+    const speed = rand(130, 265) * d.speedMul;
+    const horizontal = Math.random() < 0.5;
+    const c = { w: size, h: size, amb: true };
+
+    if (horizontal) {
+      c.y = rand(0, H - size);
+      if (Math.random() < 0.5) { c.x = -size;  c.vx =  speed; }
+      else                     { c.x = W;      c.vx = -speed; }
+      c.vy = 0;
+    } else {
+      c.x = rand(0, W - size);
+      if (Math.random() < 0.5) { c.y = -size;  c.vy =  speed; }
+      else                     { c.y = H;      c.vy = -speed; }
+      c.vx = 0;
+    }
+    pushCube(c);
+  }
+
+  // Gap between the marker's rim and a cube's surface (negative = overlapping).
+  function surfaceGap(c) {
+    const cx = clamp(player.x, c.x, c.x + c.w);
+    const cy = clamp(player.y, c.y, c.y + c.h);
+    return Math.hypot(player.x - cx, player.y - cy) - PLAYER_R;
+  }
+  function hitsPlayer(c) { return surfaceGap(c) <= 0; }
+
+  // ---------- the prize cube ----------
+  // Drifts between waypoints for the whole game. If the live event publishes a
+  // focus — the eye of a spiral, the pocket inside a closing box — the prize
+  // heads for it, and for a `keep` focus it is pinned inside, so the multiplier
+  // is never stranded on the wrong side of a wall of cubes. The rescue cube rides
+  // the same steering, for the same reason: a reward you cannot legally reach is
+  // not a reward.
+  function orbSpeed() { return ORB_SPEED * (1 + 0.16 * tier()); }
+
+  function orbWaypoint(c) {
+    c.reaim = ORB_REAIM * rand(0.7, 1.3);
+    const f = activeEvent && activeEvent.focus;
+    if (f) {
+      const a = Math.random() * TAU, r = f.r * Math.sqrt(Math.random());
+      c.tx = clamp(f.x + Math.cos(a) * r, ORB_SIZE, W - ORB_SIZE);
+      c.ty = clamp(f.y + Math.sin(a) * r, ORB_SIZE, H - ORB_SIZE);
+    } else {
+      c.tx = rand(70, W - 70);
+      c.ty = rand(70, H - 70);
+    }
+    // A prize cube that has been left alone long enough to start saying so also starts
+    // picking waypoints on your side of the arena. Only a lean, not a chase: it still
+    // has to be come to, and the multiplier is still paid for by standing in the band.
+    // It asks before the arena does — see the idle watch.
+    // The square root is so that the lean is already noticeable the moment the cube
+    // starts complaining, rather than arriving all at once just before the arena acts.
+    if (c.orb && lonely > LONELY_AT) {
+      const pull = ORB_CLING * Math.sqrt((lonely - LONELY_AT) / (1 - LONELY_AT));
+      c.tx += (player.x - c.tx) * pull;
+      c.ty += (player.y - c.ty) * pull;
+    }
+  }
+
+  function stepOrb(c, dt) {
+    if (c.caged) return stepCaged(c, dt);   // the siege has it; see stepCaged
+    const f = activeEvent && activeEvent.focus;
+    c.reaim -= dt;
+    // re-aim on schedule, on arrival, or as soon as the focus moves out of reach
+    const far = f ? Math.hypot(f.x - (c.x + c.w / 2), f.y - (c.y + c.h / 2)) > f.r : false;
+    if (c.reaim <= 0 || far) orbWaypoint(c);
+
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    const dx = c.tx - cx, dy = c.ty - cy;
+    const m = Math.hypot(dx, dy);
+    if (m < 14) c.reaim = 0;
+    // `sp` lets the rescue cube amble a little slower than the prize does
+    const sp = orbSpeed() * (c.sp || 1) * (far ? 2.2 : 1);   // hurry when left behind
+    const k = Math.min(1, ORB_TURN * dt);
+    c.vx += ((m ? dx / m : 0) * sp - c.vx) * k;
+    c.vy += ((m ? dy / m : 0) * sp - c.vy) * k;
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+
+    if (c.x < 0)         { c.x = 0;         c.vx =  Math.abs(c.vx); c.reaim = 0; }
+    if (c.x > W - c.w)   { c.x = W - c.w;   c.vx = -Math.abs(c.vx); c.reaim = 0; }
+    if (c.y < 0)         { c.y = 0;         c.vy =  Math.abs(c.vy); c.reaim = 0; }
+    if (c.y > H - c.h)   { c.y = H - c.h;   c.vy = -Math.abs(c.vy); c.reaim = 0; }
+
+    // A `keep` focus is a hard pen: the prize cannot be left outside the pocket.
+    // `r` is how far the cube's *centre* may stray, so a pocket that publishes a
+    // focus shrinks it by the cube's own half-size to keep the body clear of the walls.
+    if (f && f.keep) {
+      c.x = clamp(c.x, f.x - f.r - c.w / 2, f.x + f.r - c.w / 2);
+      c.y = clamp(c.y, f.y - f.r - c.h / 2, f.y + f.r - c.h / 2);
+    }
+    // --- and how it feels about all that ---
+    // A near miss startles it: it squashes, its eye goes wide (drawOrb reads `fright`)
+    // and it hops away from whatever it was. The hop is an impulse rather than a
+    // teleport, so the same spring that steers it also unwinds it, and a `keep` pocket
+    // clamps it back a few lines above — a cube cannot flinch its way through a wall.
+    c.fright = Math.max(0, (c.fright || 0) - dt * 2.4);
+    if (c.fright < 0.25) {
+      let worst = null, worstGap = ORB_SCARE;
+      for (const o of cubes) {
+        if (o === c || o.ghost || o.orb || o.heart) continue;
+        const gx = Math.max(o.x - (c.x + c.w), c.x - (o.x + o.w), 0);
+        const gy = Math.max(o.y - (c.y + c.h), c.y - (o.y + o.h), 0);
+        const g = Math.hypot(gx, gy);
+        if (g < worstGap) { worstGap = g; worst = o; }
+      }
+      if (worst) {
+        c.fright = 1;
+        const ax = c.x + c.w / 2 - (worst.x + worst.w / 2);
+        const ay = c.y + c.h / 2 - (worst.y + worst.h / 2);
+        const am = Math.hypot(ax, ay) || 1;
+        c.vx += (ax / am) * ORB_HOP;
+        c.vy += (ay / am) * ORB_HOP;
+        c.reaim = 0;                    // and it would rather be somewhere else now
+        if (c.orb) quipSay('flinch');   // the rescue cube keeps its complaints to itself
+      }
+    }
+    // The bracket spins faster in good company and sulks to a crawl when ignored, so
+    // the same two numbers the scoring already keeps are legible on the cube itself.
+    const mood = c.orb ? 2.6 * clamp(prox, 0, 1) - 1.1 * clamp(lonely, 0, 1) : 0;
+    c.spin = (c.spin || 0) + dt * (1.6 + mood);
+    return true;
+  }
+
+  function spawnOrb() {
+    orb = pushCube({
+      x: W / 2 - ORB_SIZE / 2, y: H / 4 - ORB_SIZE / 2,
+      w: ORB_SIZE, h: ORB_SIZE, vx: 0, vy: 0,
+      orb: true, spin: 0, reaim: 0, tx: W / 2, ty: H / 2,
+      step: stepOrb
+    });
+    return orb;
+  }
+
+  // ---------- what the prize cube has to say about it ----------
+  // The cube is the only thing in the arena that is on your side, so it is the right
+  // thing to hear from — and what it has to say is never help. It comments; it does
+  // not advise. Nothing here changes a single number in the game.
+  //
+  // Each moment has a set of lines and its own manners. `pri` is how hard it will
+  // talk over a line already on screen: a crash into the cube interrupts a near-miss
+  // remark, never the other way about. `cool` is how long that moment must wait
+  // before it can speak again, without which a wall round would be narrated wall by
+  // wall and a flinch would become a stutter.
+  //
+  // Lines come out of a shuffled bag per moment rather than a fresh random pick, so
+  // every line in a set is heard before any of them comes round again — hearing all
+  // of it is several games' work, and no two games open on the same joke.
+  // The cube is funnier heard now and then than kept talking. Every moment below is
+  // still noticed; what was turned down is how often each one is allowed to say so —
+  // longer cooldowns, a longer breath between lines, and a little more earning before
+  // the ambient observations. The lines themselves are untouched, because thinning a
+  // set is the one change that makes the cube repeat itself *sooner*.
+  const QUIP_TIME = 2.6;       // seconds a line stays up
+  const QUIP_GAP  = 1.2;       // …and the quiet after it before the next one
+  const QUIP_RUDE = 3;         // a line at least this important may break that quiet
+
+  // What counts as each moment happening
+  const QUIP_SOON   = 4.5;     // seconds left in a round that make it nearly over
+  const QUIP_GRAZE  = 7;       // px of daylight that count as a near miss
+  const QUIP_STREAK = 2.5;     // a multiplier worth mourning when it falls back to ×1
+  const QUIP_HUG    = 11.0;    // unbroken seconds in the band before it says something nice
+  const QUIP_FLAT   = 18.0;    // …and seconds stuck at ×1 before it says something else
+  const QUIP_STILL  = 6.5;     // seconds of a motionless marker
+
+  const QUIPS = {
+    // --- you hit something ---
+    crash: { pri: 3, cool: 0, lines: [
+      'Out of everything in here, you picked me.',
+      "I'm the one cube you score for NOT touching.",
+      'Ow. That was the paycheck.',
+      "Hug. Not tackle. There's a difference.",
+      'You were aiming for the gap. I believe you.',
+      'A whole heart. For touching your own prize.',
+      'I glow, I hum, I am clearly not a doorway.',
+      'Every other cube: dodged. Me: flattened.',
+      'Bold strategy, killing the scoring.',
+      'We were so close. Then we were too close.',
+      'That is the opposite of the plan.'
+    ] },
+    crashheart: { pri: 3, cool: 0, lines: [
+      'That cube was GIVING you a life.',
+      'You ran over the ambulance.',
+      'It came to help. You made it worse.',
+      'Gold cube, clear countdown, simple plan. Gone.',
+      'Refunds do not work like that.',
+      'One heart, to lose a heart. Net: sad.',
+      'It had one job. So did you.',
+      'You have mugged the rescue.'
+    ] },
+    hit: { pri: 2, cool: 10, lines: [
+      'That one was avoidable. Just saying.',
+      'It was telegraphed. In red. Twice.',
+      'I watched the whole thing. Wish I had not.',
+      'The gap was right there. Big. Roomy.',
+      'Arena: one. You: fewer hearts.',
+      'Have you considered not being there?',
+      'Ghosting is not a substitute for moving.',
+      'I will pretend I was looking away.',
+      'You had the whole stage and picked that pixel.',
+      'Yes, that counted.'
+    ] },
+    lastlife: { pri: 3, cool: 0, lines: [
+      'One heart left. No pressure.',
+      'That was your spare. Careful now.',
+      'One heart. I am going to miss you.',
+      'Down to the last one. Let us be sensible.',
+      'One left. This is where you start dodging.',
+      'Last heart. Thrilling, statistically.',
+      'One heart. Perhaps stand near me and hope.',
+      'That is the last one. I checked.'
+    ] },
+    // --- the multiplier ---
+    multlost: { pri: 2, cool: 15, lines: [
+      'And there goes the multiplier. Lovely.',
+      "Back to one. My favourite number: it means nothing.",
+      'All that work, undone in two seconds.',
+      'We were building something. Past tense.',
+      'It grows slowly and falls fast. Like trust.',
+      'Leaving me was the plan all along, clearly.',
+      'The multiplier is down, and so are my hopes.',
+      'Shall we pretend that did not happen?',
+      'Ten seconds of hugging, gone. Worth it?'
+    ] },
+    maxed: { pri: 2, cool: 21, lines: [
+      'Twelve times. The cap. Do not let it go to your head.',
+      'Maximum multiplier. I allow you one smug second.',
+      'There it is. The number stops now — I do not.',
+      'Capped out. This is as impressed as I get.',
+      'Maxed, and still alive. Suspicious.',
+      'Good. Now hold it, which is the hard part.',
+      'The ceiling. You may stop breathing on me.',
+      'I would applaud, but I am a cube.',
+      'Peak multiplier. Everything from here is downhill.'
+    ] },
+    idlemult: { pri: 1, cool: 34, lines: [
+      'Still on one. Just surviving, are we?',
+      'Dodging beautifully. Scoring nothing.',
+      'There are points over here. Free ones.',
+      'You do know the glow is the money?',
+      'Very safe. Very boring. Very ×1.',
+      'I am the only cube that pays. Still me. Over here.',
+      'Twenty rounds of not scoring is still twenty rounds.',
+      'Surviving is lovely. Scoring is the game.'
+    ] },
+    hug: { pri: 1, cool: 28, lines: [
+      'You are still here. This is nice, actually.',
+      'Look at us, earning.',
+      'Careful, I will get used to this.',
+      'This is the whole game. Well done.',
+      'Points are happening. Do not ruin it.',
+      'You have found the one good idea in here.',
+      'I would move away, but you would only follow.',
+      'Keep this up and I will start to respect you.'
+    ] },
+    // --- the rescue cube ---
+    rescued: { pri: 3, cool: 0, lines: [
+      'A heart back. Try to keep this one.',
+      'Rescued. Frame it, it will not happen twice.',
+      'One extra life, same driving.',
+      'The gold cube believed in you. Odd.',
+      'Heart restored. Dignity outstanding.',
+      'You stood beside a cube for nine seconds. Progress.',
+      'Fine. That was almost competent.',
+      'Look at you, going back for it.',
+      'A whole heart. You will spend it badly.',
+      'That is the game apologising. Do not get used to it.'
+    ] },
+    lapsed: { pri: 3, cool: 0, lines: [
+      'Too late. The gold cube has given up on you.',
+      'It waited. You did not come. Classic.',
+      'No round left to win it in. Off it goes.',
+      'That heart was free. Was.',
+      'It counted. You did not.',
+      'You ignored a free life to dodge better. Bold.',
+      'Grey and disappointed. Both of us.',
+      'You cannot out-wait a clock. Now you know.',
+      'Nine seconds was too much to ask, apparently.'
+    ] },
+    // --- rounds and bosses ---
+    firstround: { pri: 1, cool: 0, lines: [
+      'Twenty rounds. You will be fine. Probably.',
+      'Hello. I am the points. Try not to hit me.',
+      'New game, same cube, lower expectations.',
+      'Right. Let us see how long this takes.',
+      'Follow me, do not touch me. Simple.',
+      'Round one. It gets worse, obviously.',
+      'Three hearts. Spend them wisely, or at all.',
+      'I glow, you dodge, we split the points. Mostly me.'
+    ] },
+    roundend: { pri: 2, cool: 34, lines: [
+      'Almost through. Do not do anything clever.',
+      'Nearly there. This is when people panic.',
+      'Seconds left. Try standing still. Or do not.',
+      'The bar is nearly full. So is my patience.',
+      'Round is nearly done and you are still here.',
+      'Last seconds — historically your worst ones.',
+      'Wrap it up, I would like to survive this too.',
+      'You are going to clear this. Mostly probably.',
+      'This is the part where you get greedy.',
+      'Almost. Do not celebrate into a wall.'
+    ] },
+    bossnext: { pri: 3, cool: 0, lines: [
+      'Boss next. I would wish you luck, but.',
+      'Something bigger is coming. You will love it.',
+      'Boss round. Remember: that one aims.',
+      'Brace yourself. I will be over here, glowing.',
+      'The big one next, and still only three hearts.',
+      'Now would be a wonderful time to learn to dodge.',
+      'You will want both hands for this.',
+      'Next: the thing with opinions about where you stand.',
+      'Deep breath. Then panic.'
+    ] },
+    bossdown: { pri: 2, cool: 0, lines: [
+      'Boss down. I am as surprised as you are.',
+      'It is over. You may exhale.',
+      'You beat the big one. Modesty next, please.',
+      'Boss cleared. The arena will think of something.',
+      'Well. That happened.',
+      'Survived. Barely counts, but survived.',
+      'Fine — that was genuinely good. Tell no one I said so.',
+      'The big one is gone. The small ones remain.'
+    ] },
+    // --- the siege, where the cube is in no position to be smug ---
+    // The one stretch of the game where it says something useful, and it is useful
+    // because it is the one being held. The hints outrank everything else on screen:
+    // a round with no clock and no scoring is a round a player can be stuck in, so
+    // the instruction is never allowed to lose a fight with an aside about a near
+    // miss. Once it is out, it is insufferable again — see `freed`.
+    caught: { pri: 5, cool: 0, lines: [
+      'It has me. It HAS me. Do something.',
+      'Oh, I do not like this. Get me out.',
+      'I have been eaten. Scoring is cancelled.',
+      'This is the inside of it. I am inside it.',
+      'Well. This is new, and I hate it.',
+      'It swallowed me whole. Rude and inconvenient.',
+      'I am in a box, in a monster. Thoughts?',
+      'Points are off. I am off. Everything is off.'
+    ] },
+    hintwait: { pri: 4, cool: 7, lines: [
+      'It sends little ones out. Those are the way in.',
+      'Do not fight this head on. Wait for a small one.',
+      'Watch for a decoy. That is your opening.',
+      'Something smaller is coming. That one matters.',
+      'The big one cannot be hurt. The little ones can.',
+      'Hold on. It will send out a small one shortly.',
+      'Nothing to do yet. Stay alive until one arrives.',
+      'Wait for the small blue one. It is the answer.'
+    ] },
+    hintfollow: { pri: 4, cool: 7, lines: [
+      'The small one is shielded. Stay near it.',
+      'Go and keep it company. Close, and stay close.',
+      'Follow the little one. Wear its shield down.',
+      'Near it, not near me. I am busy being held.',
+      'Stand with the small one. The shield gives in time.',
+      'That blue ring is a shield. Closeness opens it.',
+      'Get nearer to it. Nearness is the whole trick.',
+      'Company wears it down. Go and be company.'
+    ] },
+    hintclose: { pri: 4, cool: 6, lines: [
+      'Good — hold that. The shield is going.',
+      'Keep at it. Do not wander off now.',
+      'That is working. Stay with it.',
+      'Nearly through. Do not get clever yet.',
+      'Yes, like that. The ring is wearing thin.',
+      'Hold your ground. It is almost open.',
+      'Do not stop. It is nearly down to nothing.',
+      'Stay. This is the only thing that works.'
+    ] },
+    hintbait: { pri: 4, cool: 6, lines: [
+      'Shield is down. Put it between you and the big one.',
+      'Now make the big one shoot it. Stand behind it.',
+      'Small one in front, you behind it. Let it fire.',
+      'Be the bait. Let the shot land on the small one.',
+      'Line them up and let the big one do the work.',
+      'Its aim follows you. So stand behind the decoy.',
+      'Get the little one in the way of that volley.',
+      'You are the lure now. Use the decoy as a wall.'
+    ] },
+    bosshurt: { pri: 5, cool: 0, lines: [
+      'That hurt it. Again, please.',
+      'One down. It felt that. I felt that.',
+      'It lost something in there. Keep going.',
+      'Yes. Again, exactly like that.',
+      'Something broke. Do it again.',
+      'It is weaker. I can feel the walls give.',
+      'Good. That is one it will not get back.',
+      'Progress. Rare, in here. Keep at it.'
+    ] },
+    freed: { pri: 5, cool: 0, lines: [
+      'Out. I am out. We will never speak of this.',
+      'Saved. You may go back to ignoring me.',
+      'Free. The big one can keep whatever it has left.',
+      'Rescued. By you. I am as surprised as anyone.',
+      'Let us not do that again. Both of us. Ever.',
+      'Loose. Slightly chewed. Grateful, I suppose.',
+      'That is the big one done. And me, undone.',
+      'Out at last. Do not expect a thank you.'
+    ] },
+    // --- being ignored, and other indignities ---
+    lonely: { pri: 2, cool: 0, lines: [
+      'I got lonely and made a friend. For you.',
+      'Since you will not come over, somebody else will.',
+      'Company is on the way. Not mine.',
+      'I called someone. They are coming to you.',
+      'Ignoring me has consequences. That is one.',
+      'You did not want a hug. It wants a hunt.',
+      'New cube, my invitation, your problem.',
+      'I was bored. Now you are busy.'
+    ] },
+    flinch: { pri: 0, cool: 18, lines: [
+      'Do you mind?',
+      'That one nearly clipped me.',
+      'I am fragile and important.',
+      'Watch it. That was my corner.',
+      'Scoring cube coming through, thank you.',
+      'Some of us are trying to glow here.',
+      'If I get hit, you get nothing. Think on it.',
+      'I moved. Nobody else was going to.'
+    ] },
+    nearmiss: { pri: 0, cool: 14, lines: [
+      'Ooh. Close.',
+      'That was a whole pixel of skill.',
+      'I felt that from over here.',
+      'Nearly a heart. Nice.',
+      'Lucky. Say thank you.',
+      'That is not dodging, that is scraping.',
+      'My life flashed before me, and I am not even you.',
+      'One pixel. Very impressive, very stupid.'
+    ] },
+    stalled: { pri: 1, cool: 31, lines: [
+      'Are you still there?',
+      'Standing still is a choice. A poor one.',
+      'Lovely spot. Very exposed.',
+      'Moving is generally part of it.',
+      'Did your hand fall asleep?',
+      'Napping? The walls are not.',
+      'Statues score nothing. Just so you know.',
+      'Hello? The arena has not stopped.'
+    ] },
+    muted: { pri: 0, cool: 0, lines: [
+      'Rude.',
+      'Music off. Now it is just us and the silence.',
+      'Fine. I will hum.',
+      'You muted the one thing in here with rhythm.',
+      'Silence. Very atmospheric. Very ominous.',
+      'No music, then. Enjoy your own breathing.',
+      'I liked that song.',
+      'Bold. Now every mistake is quiet as well as fatal.'
+    ] }
+  };
+
+  let quip = null;             // { key, text, pri, t, t0 }
+  let quipGap = 0;             // enforced quiet after a line
+  let quipBags = {};           // per moment: the lines not yet dealt from this shuffle
+  let quipLast = {};           // …and the one dealt last, so a reshuffle cannot repeat it
+  let quipRest = {};           // per moment: seconds until it may speak again
+
+  // The watchers behind the moments that are not a single event. A multiplier lost is
+  // only a story if it was ever high, a hug only counts unbroken, and standing still
+  // is measured against where the marker was, so all of it needs remembering.
+  let streakTop = 0;           // best multiplier of the current streak
+  let maxSaid = false;         // the cap has already been remarked on this visit
+  let hugT = 0, flatT = 0;     // seconds in the band / seconds stuck at ×1
+  let stillT = 0, stillX = 0, stillY = 0;
+  let endSaid = false;         // this round's "nearly there" has been spent
+
+  // One line at a time, and the cube never argues with itself: a moment that is no
+  // more important than what is already up says nothing at all rather than queueing,
+  // since a remark that arrives four seconds after the thing it is about is not a
+  // remark. Equal rank loses, so whichever of two asides got there first is the one
+  // that is read — a near miss and a flinch trading places mid-sentence is the cube
+  // sounding busy rather than the cube being funny.
+  //
+  // Returns whether the line actually got out, which is what a caller holding a
+  // once-per-visit latch of its own has to gate on: latching on the attempt would
+  // spend the only chance a moment gets on a line nobody heard, and the quieter the
+  // cube is the likelier that attempt lands in somebody else's breath.
+  function quipSay(key) {
+    const set = QUIPS[key];
+    if (!set || state !== STATE.PLAYING) return false;
+    const pri = set.pri || 0;
+    if ((quipRest[key] || 0) > 0) return false;
+    if (quip && pri <= quip.pri) return false;
+    if (!quip && quipGap > 0 && pri < QUIP_RUDE) return false;
+    quipRest[key] = set.cool || 0;
+    quip = { key, text: quipDeal(key, set.lines), pri, t: QUIP_TIME, t0: QUIP_TIME };
+    return true;
+  }
+
+  // A shuffled bag, refilled when it empties. The swap at the end is so that the line
+  // you just heard cannot be the first one out of the next shuffle, which is the one
+  // repeat a bag on its own does not rule out.
+  function quipDeal(key, lines) {
+    let bag = quipBags[key];
+    if (!bag || !bag.length) {
+      bag = lines.slice();
+      for (let i = bag.length - 1; i > 0; i--) {
+        const j = (Math.random() * (i + 1)) | 0;
+        const t = bag[i]; bag[i] = bag[j]; bag[j] = t;
+      }
+      if (bag.length > 1 && bag[bag.length - 1] === quipLast[key]) {
+        const t = bag[bag.length - 1]; bag[bag.length - 1] = bag[0]; bag[0] = t;
+      }
+      quipBags[key] = bag;
+    }
+    return (quipLast[key] = bag.pop());
+  }
+
+  function stepQuip(dt) {
+    for (const k in quipRest) if (quipRest[k] > 0) quipRest[k] = Math.max(0, quipRest[k] - dt);
+    if (quipGap > 0) quipGap = Math.max(0, quipGap - dt);
+    if (!quip) return;
+    quip.t -= dt;
+    if (quip.t <= 0) { quip = null; quipGap = QUIP_GAP; }
+  }
+
+  // A new game gets a new shuffle, so the opening line is not the same one every time.
+  function quipReset() {
+    quip = null; quipGap = 0;
+    quipBags = {}; quipLast = {}; quipRest = {};
+    streakTop = 0; maxSaid = false;
+    hugT = 0; flatT = 0; stillT = 0; stillX = 0; stillY = 0;
+    endSaid = false;
+  }
+
+  // ---------- the rescue cube ----------
+  // Somewhere the marker is not, because this thing is a cube like any other and
+  // dropping one on top of you would be a strange way to hand back a life. Inside
+  // the event's safe pocket if there is one, since that is where you can be.
+  function spawnHeart() {
+    const f = activeEvent && activeEvent.focus;
+    let best = null;
+    for (let i = 0; i < 12; i++) {
+      const p = f ? { x: f.x + rand(-f.r, f.r), y: f.y + rand(-f.r, f.r) }
+                  : { x: rand(80, W - 80), y: rand(80, H - 80) };
+      p.x = clamp(p.x, ORB_SIZE, W - ORB_SIZE);
+      p.y = clamp(p.y, ORB_SIZE, H - ORB_SIZE);
+      const d = Math.hypot(p.x - player.x, p.y - player.y);
+      if (!best || d > best.d) best = { p, d };
+      if (d > 200) break;
+    }
+    heartCube = pushCube({
+      x: best.p.x - ORB_SIZE / 2, y: best.p.y - ORB_SIZE / 2,
+      w: ORB_SIZE, h: ORB_SIZE, vx: 0, vy: 0,
+      heart: true, left: HEART_COUNT, near: false,
+      slack: 1e9, doom: false, leave: 0,  // daylight against the round clock
+      born: HEART_FADE, ghost: true,      // harmless while it fades in
+      sp: 0.8,                            // and a touch slower than the prize
+      spin: 0, reaim: 0, tx: best.p.x, ty: best.p.y,
+      step: stepOrb
+    });
+    banner = { text: 'RESCUE', good: true, icon: '♥', tint: '255,210,63', t: 2.6, t0: 2.6,
+               sub: 'stay beside the gold cube for ' + HEART_COUNT + 's to win a heart back' };
+    return heartCube;
+  }
+
+  function clearHeart() {
+    if (!heartCube) return;
+    const i = cubes.indexOf(heartCube);
+    if (i !== -1) cubes.splice(i, 1);
+    heartCube = null;
+  }
+
+  function bankHeart() {
+    clearHeart();
+    heartUsed = true;
+    lives = Math.min(MAX_LIVES, lives + 1);
+    renderLives();
+    banner = { text: '+1 LIFE', good: true, icon: '♥', tint: '255,210,63', t: 2.2, t0: 2.2,
+               sub: 'rescue banked — back to ' + lives + (lives === 1 ? ' heart' : ' hearts') };
+    quipSay('rescued');
+  }
+
+  // A countdown where the prize cube has a multiplier: it runs down only while the
+  // marker is beside the cube, and creeps back up at half speed when you are
+  // driven off. So a dodge costs progress without wiping it, and parking out of
+  // range banks nothing. Ghosting earns nothing either — the rescue has to be
+  // flown, not walked through.
+  function runHeart(dt, gap) {
+    const h = heartCube;
+    if (h) {
+      if (h.born > 0) { h.born -= dt; if (h.born <= 0) h.ghost = false; }
+      h.near = h.born <= 0 && invuln <= 0 && gap <= HEART_BAND;
+      h.left = h.near ? Math.max(0, h.left - dt)
+                      : Math.min(HEART_COUNT, h.left + dt * HEART_SLIP);
+      if (h.left <= 0) { bankHeart(); return; }
+      // Two clocks run against each other here: the count the cube still wants, and
+      // the round it has to be finished inside. `slack` is the daylight between them,
+      // and it only ever narrows — the round burns down at a second a second, and the
+      // count creeps back up every moment you are off the cube. So there is a point
+      // past which the rescue cannot be finished even by standing on it, and rather
+      // than leave a player holding a corner for a heart that was never coming, the
+      // cube says so and leaves early. drawHeart paints both halves of that: amber
+      // while the daylight is thin, ash grey while it goes.
+      h.slack = (roundLen - roundT) - h.left;
+      if (!h.doom && h.slack <= 0) {
+        h.doom = true; h.leave = HEART_LEAVE; h.ghost = true;
+        quipSay('lapsed');        // the struck-through count, said out loud
+      }
+      if (h.doom) {
+        h.leave -= dt;
+        if (h.leave <= 0) { clearHeart(); heartUsed = true; }
+      }
+      return;
+    }
+    // …and none of that can work in the siege, which has no clock for the count to
+    // race, so the siege is not offered one at all.
+    if (heartUsed || !live || lives >= MAX_LIVES || siege) return;
+    heartWait += dt;
+    if (heartWait < HEART_DELAY) return;
+    // No point dangling one there is no round left to finish it in.
+    if (roundT + HEART_COUNT + 2 > roundLen) { heartUsed = true; return; }
+    spawnHeart();
+  }
+
+  function stepCube(c, dt) {
+    if (c.step) return c.step(c, dt);
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+    return !(c.x + c.w < -90 || c.x > W + 90 || c.y + c.h < -90 || c.y > H + 90);
+  }
+
+  // ---------- geometry helper ----------
+  // Range of t for which (px,py) + t*(dx,dy) stays inside the arena grown by m.
+  function spanAlong(px, py, dx, dy, m) {
+    let tmin = -Infinity, tmax = Infinity;
+    const axes = [[px, dx, -m, W + m], [py, dy, -m, H + m]];
+    for (const [o, d, lo, hi] of axes) {
+      if (Math.abs(d) < 1e-9) { if (o < lo || o > hi) return null; continue; }
+      let t1 = (lo - o) / d, t2 = (hi - o) / d;
+      if (t1 > t2) { const s = t1; t1 = t2; t2 = s; }
+      tmin = Math.max(tmin, t1);
+      tmax = Math.min(tmax, t2);
+    }
+    return tmin > tmax ? null : { tmin, tmax };
+  }
+
+  // ---------- rounds ----------
+  // One event type per round, on repeat until the round's clock runs out.
+  // `tail` is roughly how long a single wave takes: the last wave of a round has
+  // to start early enough that the round still lands inside its 20–30 s. `beat`
+  // is the pause after one wave clears before the next is telegraphed.
+  //
+  // Walls are the exception: one wave is the whole round, since the train runs
+  // until it runs out of clock (see makeWall). Its `tail` is only there to make
+  // sure a second train can never start on the scraps of a round.
+  const ROUNDS = [
+    { name: 'wall',    label: 'WALLS',          sub: 'two at a time — where the gaps cross', ambient: 0, beat: 0.30, tail: 9.0 },
+    { name: 'corners', label: 'FOUR CORNERS',   sub: 'corners, then the edges',            ambient: 1, beat: 0.55, tail: 3.5 },
+    { name: 'rocket',  label: 'ROCKET BARRAGE', sub: 'barrage after barrage',              ambient: 0, beat: 0.70, tail: 5.2 },
+    { name: 'spiral',  label: 'SPIRAL',         sub: 'each one opens elsewhere — find the eye', ambient: 0, beat: 0.50, tail: 7.0 },
+    { name: 'box',     label: 'CLOSING BOX',    sub: 'it shuts, then it goes hunting',     ambient: 0, beat: 0.60, tail: 6.8, boss: true },
+    // The dial is a puzzle you read rather than a thing you dodge, so on its own it
+    // gave a player standing in the right sector nothing at all to do. What it gets for
+    // company is one small hunter (see beginRound), which means the right sector still
+    // has to be walked to. It used to get busy loose traffic across the face as well,
+    // and that was one reading job too many: the dial asks to be looked at — which ray
+    // a hand takes next — and cubes crossing the face while you did it made the round a
+    // matter of luck rather than of reading. So it is `calm`: the hands and the hunter
+    // are the whole of it, in the late cycles too.
+    { name: 'clock',   label: 'CLOCKWORK',      sub: 'the hands tick round — and you are not alone', ambient: 0, calm: true, beat: 0.55, tail: 10.4 },
+    // Two bodies for the whole round, so the `tail` is the walls' trick again:
+    // large enough that a second set can never start on the scraps of a round.
+    { name: 'minis',   label: 'MINI HUNTERS',   sub: 'two of them, one shot each',         ambient: 0, beat: 0.60, tail: 40 },
+    { name: 'half',    label: 'HALF THE STAGE', sub: 'half of it is gone, and it moves',   ambient: 0, beat: 0.55, tail: 9.6 },
+    // One body for the whole round, so its `tail` is only there to guarantee that a
+    // second one can never start on the scraps of one — same trick as the walls.
+    { name: 'hunter',  label: 'THE HUNTER',     sub: 'its shots follow, then commit',      ambient: 0, beat: 0.60, tail: 40, boss: true }
+  ];
+  const ROUND_BY = {};
+  for (const r of ROUNDS) ROUND_BY[r.name] = r;
+
+  // Which boss owns which boss slot. The two of them are opposite problems, so
+  // they alternate rather than being drawn: the closing box takes rounds 5 and 15,
+  // the hunter takes 10 and 20. A game therefore ends on the hunter, and neither
+  // boss is ever a surprise about *which* boss — only about when you have to face
+  // it again.
+  const BOSS_ROTA = ['box', 'hunter'];
+
+  // The schedule, fixed once per game. The non-boss slots open with a tour of every
+  // event in the order they were built, so each one gets met on its own; from there
+  // the draw is random, never the same event twice running, so the back half of a
+  // game is never the same game. Every fifth round is a boss — the rounds that pen
+  // you in or come to you, rather than merely crowding you, and the only things
+  // that end a cycle. The test tools pin FORCE_ROUND to one event name.
+  const FORCE_ROUND = null;
+  let schedule = [];
+
+  function buildSchedule() {
+    const pool = ROUNDS.filter(r => !r.boss).map(r => r.name);
+    const out = [];
+    let tour = 0;                  // how much of the roster the opening tour has shown
+    for (let n = 1; n <= MAX_ROUNDS; n++) {
+      if (FORCE_ROUND) { out.push(FORCE_ROUND); continue; }
+      if (n % BOSS_EVERY === 0) { out.push(BOSS_ROTA[(n / BOSS_EVERY - 1) % BOSS_ROTA.length]); continue; }
+      if (tour < pool.length) { out.push(pool[tour++]); continue; }
+      let name = pick(pool);
+      while (pool.length > 1 && name === out[out.length - 1]) name = pick(pool);
+      out.push(name);
+    }
+    return out;
+  }
+
+  function cfgAt(n) { return n >= 1 && n <= schedule.length ? ROUND_BY[schedule[n - 1]] : null; }
+  function roundCfg() { return cfgAt(roundNo); }
+  function isBoss(n) { const c = cfgAt(n); return !!(c && c.boss); }
+
+  // Cycle number: 0 for the first five rounds, 1 for the next five, and so on, so
+  // a cycle is exactly the run-up to a boss. Everything that gets harder, gets
+  // harder off this — which does mean the three late additions to the roster are
+  // first met at cycle 2, and are tuned knowing it.
+  function tier() { return roundNo >= 1 ? Math.min(3, Math.floor((roundNo - 1) / BOSS_EVERY)) : 0; }
+
+  // ---------- events ----------
+
+  // --- rockets: a patterned barrage of flashing lines, each ridden by a cube ---
+  const ROCKET_SIZE = 42, ROCKET_SPEED = 960;
+  const ROCKET_WARN = 1.5;     // telegraph before the first shot
+  const ROCKET_GAP  = 0.37;    // seconds between shots
+
+  // A line through (px,py) heading ang, clipped to where a rocket enters/leaves.
+  function rocketLine(px, py, ang) {
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    const s = spanAlong(px, py, dx, dy, ROCKET_SIZE);
+    const e = spanAlong(px, py, dx, dy, 0);      // where it crosses the arena edge
+    return { px, py, dx, dy, t0: s.tmin, t1: s.tmax, te: e.tmin };
+  }
+
+  // Evenly spaced parallel lanes, crossed in two passes: every other lane on the
+  // way over, then the ones you were hiding in. Alternate flips every second shot
+  // around so they arrive from opposite sides.
+  function rocketLanes(n, alternate) {
+    const horiz = Math.random() < 0.5;       // lanes across, or lanes down
+    const back  = Math.random() < 0.5;       // which end the sweep starts from
+    const base  = (horiz ? 0 : Math.PI / 2) + (Math.random() < 0.5 ? 0 : Math.PI);
+    const span  = horiz ? H : W;
+    const order = [];
+    for (let k = 0; k < n; k += 2) order.push(k);
+    for (let k = 1; k < n; k += 2) order.push(k);
+    const lines = [];
+    for (let i = 0; i < n; i++) {
+      const k   = back ? n - 1 - order[i] : order[i];
+      const at  = span * (k + 1) / (n + 1);
+      const ang = base + (alternate && i % 2 ? Math.PI : 0);
+      lines.push(horiz ? rocketLine(W / 2, at, ang) : rocketLine(at, H / 2, ang));
+    }
+    return lines;
+  }
+
+  // Every line through the middle, rotating a fixed step each shot.
+  function rocketStar(n) {
+    const base = Math.random() * Math.PI;
+    const lines = [];
+    for (let i = 0; i < n; i++) {
+      lines.push(rocketLine(W / 2, H / 2, base + i * (Math.PI / n) + (i % 2 ? Math.PI : 0)));
+    }
+    return lines;
+  }
+
+  // Fixed shapes, so the barrage is something you can read and learn.
+  const ROCKET_PATTERNS = [
+    { sub: 'every other lane, then the rest', build: n => rocketLanes(n, false) },
+    { sub: 'lanes from alternating sides',    build: n => rocketLanes(n, true) },
+    { sub: 'every line through the middle',   build: n => rocketStar(n) }
+  ];
+
+  function fireRocket(l, speed) {
+    sfx('rocket');             // one per shot, so the barrage's rhythm is its own
+    return pushCube({
+      x: l.px + l.dx * l.t0 - ROCKET_SIZE / 2,
+      y: l.py + l.dy * l.t0 - ROCKET_SIZE / 2,
+      w: ROCKET_SIZE, h: ROCKET_SIZE,
+      vx: l.dx * speed, vy: l.dy * speed,
+      rocket: true
+    });
+  }
+
+  function makeRockets() {
+    const T = tier();
+    const n = 8 + 2 * T;                       // the first cycle is the tuned one
+    const pat = pick(ROCKET_PATTERNS);
+    return {
+      sub: pat.sub, lines: pat.build(n), t: 0, fired: 0, shots: [],
+      gap: Math.max(0.20, ROCKET_GAP - 0.035 * T),
+      speed: ROCKET_SPEED + 70 * T,
+      update(dt) {
+        this.t += dt;
+        // One shot every `gap` after the telegraph, so several are in flight.
+        const due = Math.floor((this.t - ROCKET_WARN) / this.gap) + 1;
+        while (this.fired < this.lines.length && this.fired < due) {
+          this.shots.push(fireRocket(this.lines[this.fired], this.speed));
+          this.fired++;
+        }
+        if (this.fired < this.lines.length) return true;
+        return this.shots.some(s => cubes.indexOf(s) !== -1);
+      },
+      draw() {
+        const warn = this.t < ROCKET_WARN;
+        for (let i = 0; i < this.lines.length; i++) {
+          const l = this.lines[i];
+          const ax = l.px + l.dx * l.t0, ay = l.py + l.dy * l.t0;
+          let a, hot = false;
+          if (i < this.fired)   a = 0.07;                                          // spent
+          else if (warn)      { a = 0.20 + 0.55 * Math.abs(Math.sin(this.t * 9));  hot = true; }
+          else if (i === this.fired) { a = 0.28 + 0.52 * Math.abs(Math.sin(this.t * 18)); hot = true; }
+          else                  a = 0.13;                                          // queued
+          ctx.strokeStyle = `rgba(255,70,70,${a})`;
+          ctx.lineWidth = hot ? 3 : 1.5;
+          ctx.beginPath();
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(l.px + l.dx * l.t1, l.py + l.dy * l.t1);
+          ctx.stroke();
+          if (hot) {
+            ctx.strokeStyle = `rgba(255,70,70,${a * 0.3})`;
+            ctx.lineWidth = 14;
+            ctx.stroke();
+            // pip just inside the edge it arrives from, so you can read the side
+            ctx.fillStyle = `rgba(255,130,120,${Math.min(1, a + 0.2)})`;
+            ctx.beginPath();
+            ctx.arc(l.px + l.dx * (l.te + 13), l.py + l.dy * (l.te + 13), 5, 0, TAU);
+            ctx.fill();
+          }
+          ctx.lineWidth = 1;
+        }
+      }
+    };
+  }
+
+  // --- wall: a slab of cubes with one small gap ---
+  const WALL_WARN = 1.0, WALL_CELL = 44, WALL_GAP = 112;
+  const WALL_SPEED = 228;      // px/s, and 36 more each cycle
+
+  function spawnWall(dir, gapAt, gapW) {
+    const along = dir === 'l' || dir === 'r';
+    const span = along ? H : W;
+    const speed = WALL_SPEED + 36 * tier();
+    const S = WALL_CELL;
+    const kids = [];
+
+    for (let row = 0; row < 2; row++) {
+      for (let p = 0; p < span; p += S) {
+        const a = p, b = Math.min(p + S - 2, span);
+        const segs = [];
+        if (b <= gapAt || a >= gapAt + gapW) segs.push([a, b]);
+        else {
+          if (a < gapAt) segs.push([a, gapAt]);
+          if (b > gapAt + gapW) segs.push([gapAt + gapW, b]);
+        }
+        for (const [s0, s1] of segs) {
+          if (s1 - s0 < 6) continue;
+          const c = { shade: 0.9 };
+          if (along) {
+            c.y = s0; c.h = s1 - s0; c.w = S - 2;
+            if (dir === 'l') { c.x = -S * (row + 1); c.vx =  speed; }
+            else             { c.x = W + S * row;    c.vx = -speed; }
+            c.vy = 0;
+          } else {
+            c.x = s0; c.w = s1 - s0; c.h = S - 2;
+            if (dir === 'u') { c.y = -S * (row + 1); c.vy =  speed; }
+            else             { c.y = H + S * row;    c.vy = -speed; }
+            c.vx = 0;
+          }
+          kids.push(pushCube(c));
+        }
+      }
+    }
+    return kids;
+  }
+
+  // Which way a wall travels. Two slabs on the same axis can never share the board
+  // (see makeWall), so the train asks for one axis or the other by name.
+  function wallAxis(dir) { return (dir === 'l' || dir === 'r') ? 'x' : 'y'; }
+
+  // One wall: a side, a gap in it, and a second of warning owed before it arrives.
+  // `axis`, if given, is the axis the train would prefer — honoured when the "not
+  // twice from the same side" rule leaves anything on it, which it always does.
+  function wallPlan(axis) {
+    const T = tier();
+    let sides = ['l', 'r', 'u', 'd'].filter(d => d !== lastWallDir);
+    if (axis) {
+      const on = sides.filter(d => wallAxis(d) === axis);
+      if (on.length) sides = on;
+    }
+    const dir = pick(sides);
+    lastWallDir = dir;
+    const span = (dir === 'l' || dir === 'r') ? H : W;
+    const gapW = Math.max(74, WALL_GAP - 9 * T);
+    return { dir, span, gapW, gapAt: rand(40, span - gapW - 40), warn: 0 };
+  }
+
+  // Seconds from spawning a slab until its last piece is off the board. Not a
+  // guess: the back row starts two cells outside, and a cube is only dropped once
+  // it is 90 px clear of the far edge — see stepCube.
+  function wallExit(dir) {
+    const travel = (dir === 'l' || dir === 'r' ? W : H) + 2 * WALL_CELL + 90;
+    return travel / (WALL_SPEED + 36 * tier());
+  }
+
+  // Room in the round for one more wall from this side. The train asks this itself,
+  // because a round of walls is one long wave and nothing else is left to cut it
+  // off. Per side, not worst case: a wall down the short axis is a second cheaper,
+  // and refusing one on the strength of what a wide wall would have cost would
+  // leave the arena empty for the last few seconds of the round. The ROUND_MIN
+  // clause matches runRound's own test, and has to: bowing out before the floor
+  // only has the round start a fresh train behind this one, which overruns by just
+  // as much and spends a second of dead air paying for the warning twice.
+  //
+  // `lead` is how long the slab is expected to be held at the edge before it is
+  // loosed, and it is not optional book-keeping: the train lines a wall up a whole
+  // crossing before it can go, so asking whether there is room *now* would promise
+  // walls the round cannot pay for and overrun by that whole wait.
+  function wallRoom(dir, lead) {
+    return roundT < ROUND_MIN || roundT + (lead || 0) + wallExit(dir) <= roundLen;
+  }
+
+  // A round of walls is a train of them. While one slab crosses, the next is
+  // already flashing the side it will come from, so the warning costs nothing and
+  // the walls arrive back to back.
+  //
+  // Two slabs may share the board — but only ever on different axes, and the second
+  // only once the first is most of the way over. Perpendicular walls always leave
+  // somewhere legal to be: one gap is a band across the arena and the other is a
+  // band down it, and two bands that cross meet in a rectangle you can stand in.
+  // Two on the *same* axis would not — approaching head-on with gaps that do not
+  // line up is a wall with no gap in it — so a same-axis wall waits for the board to
+  // clear, exactly as every wall used to. That is the whole of it: around eleven
+  // walls in a round, where the strict one-at-a-time train managed seven.
+  const WALL_FOLLOW = 0.45;    // how far over the slab in front is before the next goes
+
+  function makeWall() {
+    return {
+      t: 0, n: 0, dir: null, air: [], last: false, next: wallPlan(),
+      update(dt) {
+        this.t += dt;
+        this.air = this.air.filter(s => s.kids.some(k => cubes.indexOf(k) !== -1));
+        const front = this.air[this.air.length - 1];
+        // Line the next side up the moment there is a gap in the plan, so its
+        // warning runs while the slab in front is still crossing. It is asked for
+        // the axis the slab in the air is *not* on, which is the only way two of
+        // them are allowed to share the board.
+        if (!this.next && !this.last) {
+          const p = wallPlan(front ? (wallAxis(front.dir) === 'x' ? 'y' : 'x') : null);
+          const lead = Math.max(WALL_WARN, front ? front.at + front.cross * WALL_FOLLOW - this.t : 0);
+          if (wallRoom(p.dir, lead)) this.next = p; else this.last = true;
+        }
+        if (!this.next) return this.air.length > 0;   // no room for another: play out
+        this.next.warn += dt;
+        const axis = wallAxis(this.next.dir);
+        const solo = this.air.every(s => wallAxis(s.dir) !== axis);
+        const room = this.air.every(s => this.t >= s.at + s.cross * WALL_FOLLOW);
+        if (this.next.warn >= WALL_WARN && solo && room) {
+          const p = this.next;
+          this.air.push({ dir: p.dir, at: this.t, cross: wallExit(p.dir),
+                          kids: spawnWall(p.dir, p.gapAt, p.gapW) });
+          this.dir  = p.dir;                   // the side that went in most recently
+          this.next = null;
+          this.n++;
+        }
+        return true;
+      },
+      draw() {
+        const p = this.next;
+        if (!p) return;                        // nothing pending: nothing to warn of
+        const a = 0.25 + 0.55 * Math.abs(Math.sin(p.warn * 10));
+        const along = p.dir === 'l' || p.dir === 'r';
+        const edge = p.dir === 'l' ? 6 : p.dir === 'r' ? W - 6 : p.dir === 'u' ? 6 : H - 6;
+        ctx.lineWidth = 6;
+        ctx.lineCap = 'butt';
+        // the incoming face, in red…
+        ctx.strokeStyle = `rgba(255,92,92,${a})`;
+        ctx.beginPath();
+        if (along) { ctx.moveTo(edge, 0); ctx.lineTo(edge, H); }
+        else       { ctx.moveTo(0, edge); ctx.lineTo(W, edge); }
+        ctx.stroke();
+        // …and the gap highlighted in the accent colour
+        ctx.strokeStyle = `rgba(76,194,255,${0.5 + 0.5 * a})`;
+        ctx.beginPath();
+        if (along) { ctx.moveTo(edge, p.gapAt); ctx.lineTo(edge, p.gapAt + p.gapW); }
+        else       { ctx.moveTo(p.gapAt, edge); ctx.lineTo(p.gapAt + p.gapW, edge); }
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+    };
+  }
+
+  // --- four corners: in to the middle, then back out ---
+  const CORNER_WARN = 0.9, CORNER_SIZE = 68, CORNER_IN = 1.1, CORNER_HOLD = 0.45, CORNER_OUT = 1.0;
+  const CORNER_STOP = 62;      // how close to dead centre they get
+
+  // Where the four charges come from, alternating wave by wave: the corners, then
+  // the middles of the four edges, then the corners again. The safe ground of one
+  // set is the line of fire of the other, so the round turns you 45° round the
+  // arena every wave instead of letting you settle on one diagonal and stay there.
+  // A round always opens on the corners — that is the shape the name promises, and
+  // the cardinals only mean anything as the answer to it.
+  let cornerCard = false;      // does the next wave come in off the edges?
+
+  function cornerSpots(S, card) {
+    return card
+      ? [[(W - S) / 2, -S], [(W - S) / 2, H], [-S, (H - S) / 2], [W, (H - S) / 2]]
+      : [[-S, -S], [W, -S], [-S, H], [W, H]];
+  }
+
+  function spawnCorners(card) {
+    const T = tier();
+    const S = CORNER_SIZE + 6 * T, kids = [];
+    const stop = Math.max(34, CORNER_STOP - 7 * T);
+    const dur  = Math.max(0.6, CORNER_IN - 0.13 * T);
+    const spots = cornerSpots(S, card);
+    for (const [sx, sy] of spots) {
+      const cx = sx + S / 2, cy = sy + S / 2;
+      const dx = W / 2 - cx, dy = H / 2 - cy;
+      const m = Math.hypot(dx, dy);
+      const tx = W / 2 - (dx / m) * stop - S / 2;   // stop short of dead centre
+      const ty = H / 2 - (dy / m) * stop - S / 2;
+      kids.push(pushCube({
+        x: sx, y: sy, w: S, h: S, vx: 0, vy: 0, shade: 1.05,
+        p: 0, ph: 'in', hold: 0, dur,
+        sx, sy, tx, ty,
+        step(c, dt) {
+          if (c.ph === 'in') {
+            c.p += dt / c.dur;
+            if (c.p >= 1) { c.p = 1; c.ph = 'hold'; }
+          } else if (c.ph === 'hold') {
+            c.hold += dt;
+            if (c.hold >= CORNER_HOLD) c.ph = 'out';
+          } else {
+            c.p -= dt / CORNER_OUT;
+            if (c.p <= 0) return false;
+          }
+          const k = ease(c.p);
+          c.x = c.sx + (c.tx - c.sx) * k;
+          c.y = c.sy + (c.ty - c.sy) * k;
+          return true;
+        }
+      }));
+    }
+    return kids;
+  }
+
+  function makeCorners() {
+    const card = cornerCard;
+    cornerCard = !card;                       // …and the next wave is the other one
+    return {
+      t: 0, card, kids: null,
+      update(dt) {
+        this.t += dt;
+        if (!this.kids) {
+          if (this.t >= CORNER_WARN) this.kids = spawnCorners(this.card);
+          return true;
+        }
+        return this.kids.some(k => cubes.indexOf(k) !== -1);
+      },
+      // Brackets where the charges will come from, so the wave is read before it
+      // moves: an L in each corner, or a squared gate on each edge.
+      draw() {
+        if (this.kids) return;
+        const a = 0.25 + 0.6 * Math.abs(Math.sin(this.t * 11));
+        ctx.strokeStyle = `rgba(255,182,76,${a})`;
+        ctx.lineWidth = 4;
+        const L = 46, M = 10;
+        ctx.beginPath();
+        if (this.card) {
+          const HW = (CORNER_SIZE + 6 * tier()) / 2;
+          // x, y of the edge's middle, then the inward direction
+          const gates = [[W / 2, M, 0, 1], [W / 2, H - M, 0, -1], [M, H / 2, 1, 0], [W - M, H / 2, -1, 0]];
+          for (const [x, y, ix, iy] of gates) {
+            // along the edge, and a tick turning inwards at each end of it
+            const ax = iy ? 1 : 0, ay = ix ? 1 : 0;   // the edge's own direction
+            ctx.moveTo(x - ax * HW, y - ay * HW);
+            ctx.lineTo(x + ax * HW, y + ay * HW);
+            for (const s of [-1, 1]) {
+              ctx.moveTo(x + ax * HW * s, y + ay * HW * s);
+              ctx.lineTo(x + ax * HW * s + ix * 22, y + ay * HW * s + iy * 22);
+            }
+          }
+        } else {
+          const corners = [[M, M, 1, 1], [W - M, M, -1, 1], [M, H - M, 1, -1], [W - M, H - M, -1, -1]];
+          for (const [x, y, sx, sy] of corners) {
+            ctx.moveTo(x + sx * L, y);
+            ctx.lineTo(x, y);
+            ctx.lineTo(x, y + sy * L);
+          }
+        }
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+    };
+  }
+
+  // --- spiral: entries sweep round a fixed eye, and the next one opens elsewhere ---
+  // Deliberately the gentlest of the roster: a thin, slow stream around a wide eye.
+  // The gap between entries is tied to how fast they travel. Slowing the cubes
+  // down without spacing them further apart in time would leave more of them in
+  // the air at once, which is the opposite of easier: the same count, given more
+  // room each, is the point.
+  //
+  // The eye stands still for its whole vortex. It used to drift on a slow Lissajous
+  // path, which made the round about keeping up with a moving safe spot *while*
+  // hugging the prize inside it — two jobs at once. Instead each vortex opens
+  // somewhere new, so the round is a series of places to be rather than one place
+  // that walks away from you: the move happens in the gap between waves, where you
+  // can see where it is going, rather than under your feet.
+  const SPIRAL_WARN = 0.85, SPIRAL_GAP = 0.19, SPIRAL_STEP = 0.5, SPIRAL_SPEED = 300;
+  const SPIRAL_ARMS = 22, SPIRAL_ARMS_T = 6;   // arms per vortex, and per cycle on top
+  const SPIRAL_EYE_R = 72;                  // radius of the calm middle
+  const SPIRAL_INSET = 165;                 // how near an edge an eye may open
+
+  // Somewhere new for the next one: the best of a handful of candidates, judged on
+  // how far it is from where the last one was. Two vortices running in the same
+  // corner read as one long wave in one place, which is the round this replaced.
+  let lastEye = null;
+  function spiralSpot() {
+    let best = null;
+    for (let i = 0; i < 6; i++) {
+      const p = { x: rand(SPIRAL_INSET, W - SPIRAL_INSET), y: rand(SPIRAL_INSET, H - SPIRAL_INSET) };
+      const d = lastEye ? Math.hypot(p.x - lastEye.x, p.y - lastEye.y) : Infinity;
+      if (!best || d > best.d) best = { p, d };
+      if (d > 300) break;
+    }
+    lastEye = best.p;
+    return best.p;
+  }
+
+  // Entry from the rim along `a`, aimed back past the eye so the swarm winds in
+  // as a vortex rather than a funnel. Cubes keep the heading they were given.
+  function spawnSpiralCube(eye, a, sign, speed) {
+    const size = 30;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    const s = spanAlong(eye.x, eye.y, dx, dy, size);
+    if (!s) return;
+    const cx = eye.x + dx * s.tmax, cy = eye.y + dy * s.tmax;
+    const rot = sign * 0.32;                      // swing off the eye: a vortex
+    const ndx = -(dx * Math.cos(rot) - dy * Math.sin(rot));
+    const ndy = -(dx * Math.sin(rot) + dy * Math.cos(rot));
+    pushCube({
+      x: cx - size / 2, y: cy - size / 2, w: size, h: size,
+      vx: ndx * speed, vy: ndy * speed, shade: 0.95
+    });
+  }
+
+  function makeSpiral() {
+    const T = tier();
+    const eye = spiralSpot();
+    return {
+      t: 0, n: 0,
+      // A vortex reads as a vortex well before it is a wall: fifteen per cent fewer
+      // arms leaves the same shape with gaps you can actually cross it through.
+      total: SPIRAL_ARMS + SPIRAL_ARMS_T * T,
+      speed: SPIRAL_SPEED + 36 * T,
+      a0: Math.random() * TAU,
+      sign: Math.random() < 0.5 ? 1 : -1,
+      eye,
+      focus: { x: eye.x, y: eye.y, r: SPIRAL_EYE_R },
+      update(dt) {
+        this.t += dt;
+        if (this.t < SPIRAL_WARN) return true;
+        const due = Math.floor((this.t - SPIRAL_WARN) / SPIRAL_GAP) + 1;
+        while (this.n < Math.min(due, this.total)) {
+          spawnSpiralCube(this.eye, this.a0 + this.sign * this.n * SPIRAL_STEP,
+                          this.sign, this.speed);
+          this.n++;
+        }
+        return this.n < this.total;
+      },
+      draw() {
+        const e = this.eye;
+        // The eye is marked for the whole wave — it is the one calm spot, and where
+        // it is drawn is where it stays until this vortex is spent.
+        const p = 0.3 + 0.25 * Math.abs(Math.sin(this.t * 4));
+        ctx.strokeStyle = `rgba(76,194,255,${p})`;
+        ctx.setLineDash([7, 8]);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, SPIRAL_EYE_R, 0, TAU);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        if (this.t < SPIRAL_WARN) {
+          const a = 0.2 + 0.55 * Math.abs(Math.sin(this.t * 11));
+          ctx.strokeStyle = `rgba(255,182,76,${a})`;
+          ctx.lineWidth = 4;
+          for (let i = 0; i < 3; i++) {
+            const from = this.a0 + this.sign * (this.t * 5 + i * TAU / 3);
+            ctx.beginPath();
+            ctx.arc(e.x, e.y, 150 + i * 40, from, from + 0.9, this.sign < 0);
+            ctx.stroke();
+          }
+        }
+        ctx.lineWidth = 1;
+      }
+    };
+  }
+
+  // --- box: four slabs squeeze down to a pocket, then hunt around with it ---
+  // A roomy pocket on a slow prowl. This is the one round that pens you in, so its
+  // difficulty is meant to be in having nowhere else to be — not in the walls
+  // outrunning you to the next spot, which is only ever unfair.
+  const BOX_WARN = 0.9, BOX_OPEN = 228, BOX_IN = 1.3, BOX_ROAM = 3.4, BOX_OUT = 0.9;
+  const BOX_DASH = 0.95;       // seconds between picking somewhere new to be
+  const BOX_STEER = 1.7;       // how hard the pocket pulls onto its next spot
+  const BOX_REACH = Math.max(W, H);   // how far each slab reaches outwards
+
+  // Four blank slabs; the event writes their rectangles every frame.
+  function spawnBoxSlabs() {
+    const kids = [];
+    for (let i = 0; i < 4; i++) {
+      kids.push(pushCube({
+        x: 0, y: 0, w: 1, h: 1, vx: 0, vy: 0, slab: true, shade: 0.88, dead: false,
+        step(c) { return !c.dead; }
+      }));
+    }
+    return kids;
+  }
+
+  // The pocket is the hole, and the slabs are exactly its complement — so they
+  // always meet cleanly and the whole box can be moved by moving one point.
+  function layoutBox(ev) {
+    const o = ev.half, R = BOX_REACH;
+    const x = ev.pocket.x, y = ev.pocket.y;
+    const [top, bot, lef, rig] = ev.slabs;
+    top.x = 0;          top.y = y - o - R;  top.w = W;  top.h = R;
+    bot.x = 0;          bot.y = y + o;      bot.w = W;  bot.h = R;
+    lef.x = x - o - R;  lef.y = y - o;      lef.w = R;  lef.h = o * 2;
+    rig.x = x + o;      rig.y = y - o;      rig.w = R;  rig.h = o * 2;
+  }
+
+  // Somewhere else to be, and not a polite distance away.
+  function boxSpot(o, from) {
+    let best = null;
+    for (let i = 0; i < 6; i++) {
+      const p = { x: rand(o + 8, W - o - 8), y: rand(o + 8, H - o - 8) };
+      const d = Math.hypot(p.x - from.x, p.y - from.y);
+      if (!best || d > best.d) best = { p, d };
+      if (d > 190) break;
+    }
+    return best.p;
+  }
+
+  function makeBox() {
+    const T = tier();
+    const o = Math.max(84, BOX_OPEN - 12 * T) / 2;
+    const roam = BOX_ROAM + 0.9 * T;
+    const dash = Math.max(0.42, BOX_DASH - 0.09 * T);
+    const speed = 142 + 46 * T;
+    const home = {
+      x: clamp(rand(W * 0.28, W * 0.72), o + 14, W - o - 14),
+      y: clamp(rand(H * 0.28, H * 0.72), o + 14, H - o - 14)
+    };
+    return {
+      t: 0, ph: 'warn', k: 0, rt: roam, dashT: 0, quiet: true,
+      o, half: BOX_REACH, slabs: null,
+      pocket: { x: home.x, y: home.y },
+      pv: { x: 0, y: 0 },              // the pocket's own velocity, px/s
+      tgt: { x: home.x, y: home.y },
+      focus: { x: home.x, y: home.y, r: Math.max(12, o - ORB_SIZE / 2 - 4) },
+      update(dt) {
+        this.t += dt;
+        if (this.ph === 'warn') {
+          if (this.t >= BOX_WARN) { this.ph = 'in'; this.slabs = spawnBoxSlabs(); }
+          return true;
+        }
+        if (this.ph === 'in') {
+          this.k = Math.min(1, this.k + dt / BOX_IN);
+          this.half = BOX_REACH + (this.o - BOX_REACH) * ease(this.k);
+          if (this.k >= 1) {
+            this.ph = 'roam';
+            this.focus.keep = true;      // from here the prize rides in the pocket
+          }
+        } else if (this.ph === 'roam') {
+          this.rt -= dt;
+          // Somewhere new to be every dash or so — but steered onto, not snapped
+          // to. The pocket is pulled toward its target by a critically damped
+          // spring and carries its momentum through the turn, so it still goes
+          // hunting and still gets there fast; it just arcs into each new heading
+          // and eases to a stop instead of jerking from one dash to the next.
+          this.dashT -= dt;
+          if (this.dashT <= 0) {
+            this.dashT = dash * rand(0.75, 1.5);
+            this.tgt = boxSpot(this.o, this.pocket);
+          }
+          const dx = this.tgt.x - this.pocket.x, dy = this.tgt.y - this.pocket.y;
+          const w = BOX_STEER;
+          this.pv.x += (dx * w * w - 2 * w * this.pv.x) * dt;
+          this.pv.y += (dy * w * w - 2 * w * this.pv.y) * dt;
+          const vm = Math.hypot(this.pv.x, this.pv.y);
+          if (vm > speed) { this.pv.x *= speed / vm; this.pv.y *= speed / vm; }
+          this.pocket.x += this.pv.x * dt;
+          this.pocket.y += this.pv.y * dt;
+          // At the edge, drop the velocity that is driving into it, or the pocket
+          // hugs the wall until its next target happens to point away from it.
+          const bx = clamp(this.pocket.x, this.o + 2, W - this.o - 2);
+          const by = clamp(this.pocket.y, this.o + 2, H - this.o - 2);
+          if (bx !== this.pocket.x) { this.pocket.x = bx; this.pv.x = 0; }
+          if (by !== this.pocket.y) { this.pocket.y = by; this.pv.y = 0; }
+          if (this.rt <= 0) { this.ph = 'out'; this.focus.keep = false; }
+        } else {
+          this.k -= dt / BOX_OUT;
+          this.half = BOX_REACH + (this.o - BOX_REACH) * ease(clamp(this.k, 0, 1));
+          if (this.k <= 0) {
+            for (const s of this.slabs) s.dead = true;
+            return false;
+          }
+        }
+        layoutBox(this);
+        this.focus.x = this.pocket.x;
+        this.focus.y = this.pocket.y;
+        return true;
+      },
+      draw() {
+        if (this.ph !== 'warn') return;
+        const a = 0.25 + 0.6 * Math.abs(Math.sin(this.t * 11));
+        ctx.strokeStyle = `rgba(76,194,255,${a})`;
+        ctx.setLineDash([9, 7]);
+        ctx.lineWidth = 3;
+        ctx.strokeRect(this.pocket.x - this.o, this.pocket.y - this.o, this.o * 2, this.o * 2);
+        ctx.setLineDash([]);
+        ctx.lineWidth = 1;
+      }
+    };
+  }
+
+  // --- clock: a dial of cubes, with hands that tick round it ---
+  // Nothing here sweeps. Each hand sits on its hour with the ray it is about to
+  // take drawn in front of it, then snaps a step clockwise. That dwell is the whole
+  // round: it is exactly how long you have to get off the ray. A hand is a run of
+  // squares rather than a bar, because the arena only knows axis-aligned rectangles
+  // — and they are spaced closer than they are wide, so a hand has no holes in it.
+  const CLOCK_WARN  = 0.9;
+  const CLOCK_DWELL = 0.64;    // held on the hour, with the next ray showing
+  const CLOCK_SNAP  = 0.2;     // and the tick itself
+  const CLOCK_TICKS = 12;      // one whole revolution of the long hand per wave
+  const CLOCK_R     = 246;     // the dial the hours sit on
+  const CLOCK_HOUR  = 30;      // size of an hour cube
+  const CLOCK_ARM   = 30;      // and of one link of a hand
+  const CLOCK_LINK  = 26;      // spacing along a hand: under a link, so no gaps
+  const CLOCK_SHORT = 0.56;    // the short hand, as a fraction of the long one
+
+  // Hour k as an angle, 12 o'clock up. Fractional hours are mid-tick.
+  const clockAngle = k => -Math.PI / 2 + k * TAU / 12;
+
+  function spawnClockArm(reach) {
+    const links = [];
+    for (let r = 0; r <= reach + 0.01; r += CLOCK_LINK) {
+      links.push({ r, c: pushCube({
+        x: -9e4, y: -9e4, w: CLOCK_ARM, h: CLOCK_ARM, vx: 0, vy: 0,
+        shade: 0.92, dead: false, step(c) { return !c.dead; }
+      }) });
+    }
+    return links;
+  }
+
+  function layoutClockArm(links, a) {
+    for (const l of links) {
+      l.c.x = W / 2 + Math.cos(a) * l.r - CLOCK_ARM / 2;
+      l.c.y = H / 2 + Math.sin(a) * l.r - CLOCK_ARM / 2;
+    }
+  }
+
+  function spawnClockDial() {
+    const cs = [];
+    for (let k = 0; k < 12; k++) {
+      const a = clockAngle(k);
+      cs.push(pushCube({
+        x: W / 2 + Math.cos(a) * CLOCK_R - CLOCK_HOUR / 2,
+        y: H / 2 + Math.sin(a) * CLOCK_R - CLOCK_HOUR / 2,
+        w: CLOCK_HOUR, h: CLOCK_HOUR, vx: 0, vy: 0,
+        shade: 0.78, dead: false, step(c) { return !c.dead; }
+      }));
+    }
+    return cs;
+  }
+
+  function makeClock() {
+    const T = tier();
+    const dwell = Math.max(0.30, CLOCK_DWELL - 0.06 * T);
+    const snap  = Math.max(0.12, CLOCK_SNAP - 0.02 * T);
+    const long  = CLOCK_R - 34;
+    const h0 = (Math.random() * 12) | 0;
+    return {
+      t: 0, ph: 'warn', k: 0, tick: 0, hold: dwell, dwell, long,
+      hL: h0, hS: (h0 + 8) % 12,            // the two hands, in hours
+      aL: clockAngle(h0), aS: clockAngle((h0 + 8) % 12),
+      moveS: false, dial: null, armL: null, armS: null, armB: null,
+      update(dt) {
+        this.t += dt;
+        if (this.ph === 'warn') {
+          if (this.t < CLOCK_WARN) return true;
+          this.ph = 'hold';
+          this.dial = spawnClockDial();
+          this.armL = spawnClockArm(long);
+          this.armS = spawnClockArm(long * CLOCK_SHORT);
+          // from the third cycle the long hand grows a stub out the back
+          this.armB = T >= 2 ? spawnClockArm(long * 0.34) : null;
+        } else if (this.ph === 'hold') {
+          this.hold -= dt;
+          if (this.hold <= 0) {
+            // The short hand keeps time: one hour for every three of the long one.
+            this.moveS = this.tick % 3 === 2;
+            this.ph = 'tick';
+            this.k = 0;
+          }
+        } else {
+          this.k = Math.min(1, this.k + dt / snap);
+          const p = ease(this.k);
+          this.aL = clockAngle(this.hL + p);
+          if (this.moveS) this.aS = clockAngle(this.hS + p);
+          if (this.k >= 1) {
+            this.hL = (this.hL + 1) % 12;
+            if (this.moveS) this.hS = (this.hS + 1) % 12;
+            this.aL = clockAngle(this.hL);
+            this.aS = clockAngle(this.hS);
+            this.tick++;
+            if (this.tick >= CLOCK_TICKS) {
+              for (const c of this.dial) c.dead = true;
+              for (const l of this.armL.concat(this.armS, this.armB || [])) l.c.dead = true;
+              return false;
+            }
+            this.ph = 'hold';
+            this.hold = dwell;
+          }
+        }
+        if (this.armL) {
+          layoutClockArm(this.armL, this.aL);
+          layoutClockArm(this.armS, this.aS);
+          if (this.armB) layoutClockArm(this.armB, this.aL + Math.PI);
+        }
+        return true;
+      },
+      draw() {
+        const cx = W / 2, cy = H / 2;
+        const warn = this.ph === 'warn';
+        const a = warn ? 0.25 + 0.6 * Math.abs(Math.sin(this.t * 11)) : 0.15;
+        ctx.strokeStyle = warn ? `rgba(255,182,76,${a})` : `rgba(160,180,200,${a})`;
+        ctx.lineWidth = warn ? 4 : 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, CLOCK_R, 0, TAU);
+        ctx.stroke();
+        ctx.beginPath();                       // the hour marks, so it reads as a dial
+        for (let k = 0; k < 12; k++) {
+          const g = clockAngle(k);
+          ctx.moveTo(cx + Math.cos(g) * (CLOCK_R - 17), cy + Math.sin(g) * (CLOCK_R - 17));
+          ctx.lineTo(cx + Math.cos(g) * (CLOCK_R + 17), cy + Math.sin(g) * (CLOCK_R + 17));
+        }
+        ctx.stroke();
+        // Where each hand is going next, and how soon. This is the round's one
+        // warning, and the only reason the tick is fair.
+        if (this.ph === 'hold') {
+          const urg = 1 - clamp(this.hold / this.dwell, 0, 1);
+          const rays = [[this.hL + 1, this.long]];
+          if (this.tick % 3 === 2) rays.push([this.hS + 1, this.long * CLOCK_SHORT]);
+          ctx.strokeStyle = `rgba(255,92,92,${0.18 + 0.5 * urg})`;
+          ctx.lineWidth = 3;
+          ctx.setLineDash([8, 7]);
+          ctx.beginPath();
+          for (const [h, r] of rays) {
+            const g = clockAngle(h);
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + Math.cos(g) * r, cy + Math.sin(g) * r);
+          }
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        ctx.lineWidth = 1;
+      }
+    };
+  }
+
+  // --- half: half the stage goes, and then the half goes round ---
+  // The covered side is one of four half-planes, and it moves a quarter turn at a
+  // time. A turn retreats the old side while the new one advances at the same rate,
+  // which leaves exactly one safe rectangle — the corner both of them are walking
+  // away from — so there is always somewhere to be, and it is always further round
+  // the way the cover is turning. Cover is exactly half the stage at rest and a
+  // little under mid-turn, where the two strips overlap in a corner.
+  const HALF_WARN = 0.9, HALF_IN = 0.9, HALF_OUT = 0.6;
+  const HALF_HOLD = 1.65;      // how long a side is held before it turns
+  const HALF_TURN = 0.85;      // and how long the quarter turn takes
+  const HALF_TURNS = 3;        // quarter turns per wave
+
+  // The strip side `s` covers at depth k — 0 is the left half, then clockwise.
+  function halfRect(s, k) {
+    const wx = (W / 2) * k, hy = (H / 2) * k;
+    if (s === 0) return { x: 0, y: 0, w: wx, h: H };
+    if (s === 1) return { x: 0, y: 0, w: W, h: hy };
+    if (s === 2) return { x: W - wx, y: 0, w: wx, h: H };
+    return { x: 0, y: H - hy, w: W, h: hy };
+  }
+
+  // What is left over. Always a rectangle, because the two sides in play are
+  // neighbours on the way round and therefore perpendicular.
+  function halfSafe(parts) {
+    let x0 = 0, y0 = 0, x1 = W, y1 = H;
+    for (const p of parts) {
+      if (p.k <= 0) continue;
+      const r = halfRect(p.s, p.k);
+      if (p.s === 0)      x0 = Math.max(x0, r.w);
+      else if (p.s === 1) y0 = Math.max(y0, r.h);
+      else if (p.s === 2) x1 = Math.min(x1, r.x);
+      else                y1 = Math.min(y1, r.y);
+    }
+    return { x0, y0, x1, y1 };
+  }
+
+  function spawnHalfSlabs() {
+    const kids = [];
+    for (let i = 0; i < 2; i++) {
+      kids.push(pushCube({
+        x: -9e4, y: -9e4, w: 0, h: 0, vx: 0, vy: 0,
+        slab: true, shade: 0.9, dead: false, step(c) { return !c.dead; }
+      }));
+    }
+    return kids;
+  }
+
+  function layoutHalf(ev) {
+    for (let i = 0; i < 2; i++) {
+      const c = ev.slabs[i], p = ev.parts[i];
+      const r = halfRect(p.s, p.k);
+      // A strip with no depth is parked off the board rather than left as a line
+      // along the edge, which the marker could be clamped up against.
+      if (r.w < 0.5 || r.h < 0.5) { c.x = -9e4; c.y = -9e4; c.w = 0; c.h = 0; continue; }
+      c.x = r.x; c.y = r.y; c.w = r.w; c.h = r.h;
+    }
+  }
+
+  function makeHalf() {
+    const T = tier();
+    const hold = Math.max(0.85, HALF_HOLD - 0.2 * T);
+    const turn = Math.max(0.45, HALF_TURN - 0.12 * T);
+    const dir = Math.random() < 0.5 ? 1 : -1;      // round clockwise, or back
+    const s0 = (Math.random() * 4) | 0;
+    return {
+      t: 0, ph: 'warn', k: 0, ht: 0, turns: 0, dir, hold,
+      cur: s0, nxt: (s0 + 4 + dir) % 4,
+      parts: [{ s: s0, k: 0 }, { s: (s0 + 4 + dir) % 4, k: 0 }],
+      slabs: null,
+      focus: { x: W / 2, y: H / 2, r: 200 },
+      update(dt) {
+        this.t += dt;
+        if (this.ph === 'warn') {
+          if (this.t >= HALF_WARN) { this.ph = 'in'; this.slabs = spawnHalfSlabs(); }
+        } else if (this.ph === 'in') {
+          this.k = Math.min(1, this.k + dt / HALF_IN);
+          this.parts = [{ s: this.cur, k: ease(this.k) }, { s: this.nxt, k: 0 }];
+          if (this.k >= 1) { this.ph = 'hold'; this.ht = hold; this.focus.keep = true; }
+        } else if (this.ph === 'hold') {
+          this.ht -= dt;
+          this.parts = [{ s: this.cur, k: 1 }, { s: this.nxt, k: 0 }];
+          if (this.ht <= 0) { this.ph = 'turn'; this.k = 0; }
+        } else if (this.ph === 'turn') {
+          this.k = Math.min(1, this.k + dt / turn);
+          const p = ease(this.k);
+          this.parts = [{ s: this.cur, k: 1 - p }, { s: this.nxt, k: p }];
+          if (this.k >= 1) {
+            this.cur = this.nxt;
+            this.nxt = (this.cur + 4 + this.dir) % 4;
+            this.turns++;
+            if (this.turns >= HALF_TURNS) { this.ph = 'out'; this.k = 1; this.focus.keep = false; }
+            else { this.ph = 'hold'; this.ht = hold; }
+          }
+        } else {
+          this.k -= dt / HALF_OUT;
+          this.parts = [{ s: this.cur, k: ease(clamp(this.k, 0, 1)) }, { s: this.nxt, k: 0 }];
+          if (this.k <= 0) {
+            for (const c of this.slabs) c.dead = true;
+            return false;
+          }
+        }
+        if (this.slabs) layoutHalf(this);
+        // the prize rides in whatever is left, so it is never behind the cover
+        const s = halfSafe(this.parts);
+        this.focus.x = (s.x0 + s.x1) / 2;
+        this.focus.y = (s.y0 + s.y1) / 2;
+        this.focus.r = Math.max(14, Math.min(s.x1 - s.x0, s.y1 - s.y0) / 2 - ORB_SIZE / 2 - 6);
+        return true;
+      },
+      draw() {
+        if (this.ph === 'warn') {
+          const a = 0.25 + 0.6 * Math.abs(Math.sin(this.t * 11));
+          const r = halfRect(this.cur, 1);
+          ctx.strokeStyle = `rgba(255,182,76,${a})`;
+          ctx.setLineDash([11, 8]);
+          ctx.lineWidth = 3;
+          ctx.strokeRect(r.x + 2, r.y + 2, r.w - 4, r.h - 4);
+          ctx.setLineDash([]);
+          ctx.lineWidth = 1;
+          return;
+        }
+        if (this.ph === 'hold') {          // which way it turns next, and how soon
+          const urg = 1 - clamp(this.ht / this.hold, 0, 1);
+          const r = halfRect(this.nxt, 1);
+          ctx.strokeStyle = `rgba(255,92,92,${0.16 + 0.45 * urg})`;
+          ctx.setLineDash([9, 9]);
+          ctx.lineWidth = 3;
+          ctx.strokeRect(r.x + 3, r.y + 3, r.w - 6, r.h - 6);
+          ctx.setLineDash([]);
+          ctx.lineWidth = 1;
+        }
+        const s = halfSafe(this.parts);    // and the ground that is still yours
+        ctx.strokeStyle = 'rgba(76,194,255,0.18)';
+        ctx.strokeRect(s.x0 + 1.5, s.y0 + 1.5, s.x1 - s.x0 - 3, s.y1 - s.y0 - 3);
+      }
+    };
+  }
+
+  // --- hunters: a box that stands off and shoots homing boxes at you ---
+  // The other boss, and the opposite idea. The closing box pens you in and comes
+  // with you; a hunter leaves the whole arena open and sends things across it. Its
+  // body is slow and lethal to touch, but it never chases — the threat is what it
+  // fires. Each shot tracks the marker at a speed you can out-turn for a second or
+  // so, and then *commits*: whatever heading it held when its tracking ran out, flat
+  // out, until it is off the stage. So a shot is beaten by being somewhere else
+  // late. Break early and it simply follows you round; break as it commits and it
+  // throws itself at where you were.
+  //
+  // One piece of machinery, three jobs. A unit is a body that prowls, aims and
+  // fires: the boss round is one big unit firing a fanned volley, the mini-hunter
+  // round is two small ones firing one shot each, and the idle watch at the end of
+  // this section can add one more small one to an ordinary round. They all live in
+  // `prowlers` and are all stepped in one place, because they all have to leave the
+  // same way — with the round, on the round's own clock (see `huntStays`, which is
+  // the wall train's test for the same reason: the floor clause keeps a body alive
+  // instead of letting the round start a second one behind it).
+  const HUNT_WARN   = 1.1;     // dashed outline before anything can bite
+  const HUNT_SIZE   = 122;     // the boss body
+  const HUNT_IN     = 0.45;    // how long it takes to swell to that
+  const HUNT_EXIT   = 0.9;     // and to fold itself away at the end of the round
+  const HUNT_SPEED  = 84;      // px/s of prowl
+  const HUNT_STEER  = 1.5;     // how hard it pulls onto the next place to stand
+  const HUNT_AIM    = 2.6;     // seconds between picking one
+  const HUNT_VOLLEY = 2.2;     // seconds between volleys
+  const HUNT_CHARGE = 0.6;     // the tell: core and muzzle line brighten for this
+  const HUNT_SPACE  = 0.13;    // pause between the shots of one volley
+  const HUNT_FAN    = 0.60;    // radians of spread across a whole volley, however big
+  const HUNT_SHOT   = 26;      // a shot
+  const HUNT_TRACK  = 245;     // px/s while it is tracking you
+  const HUNT_TURN   = 2.6;     // rad/s it can bend its heading onto you
+  const HUNT_HOME   = 1.5;     // seconds of tracking before it commits
+  const HUNT_DASH   = 880;     // px/s it commits at
+  const HUNT_PUSH   = 0.26;    // seconds of that acceleration
+
+  // The small ones. Two at once, one shot apiece: fire arriving from two places
+  // instead of one, which is a different problem rather than a bigger one — there is
+  // no single thing to keep away from, and the safe side of one of them is the wrong
+  // side of the other. A body is half the boss's size and a little quicker on its
+  // feet, and its shot is smaller and tracks a touch slower, because two of them are
+  // rarely both somewhere else.
+  //
+  // Two and not three: the pair is what makes the point, and the third body mostly
+  // took away the answer to it. Being crossfired from two directions is read by
+  // standing off the line between them; a third put shots on that ground too, so the
+  // round stopped being a thing to solve and turned into one to out-run.
+  const MINI_SIZE    = 58;
+  const MINI_COUNT   = 2;      // on stage at once, for the whole round
+  const MINI_MAX     = 3;      // …and the ceiling the idle watch is allowed to fill
+  const MINI_SPEED   = 112;
+  const MINI_VOLLEY  = 3.0;    // per hunter, so the two of them ≈ a shot every 1.5 s
+  const MINI_TRACK   = 235;
+  const MINI_HOME    = 1.3;
+  const MINI_SHOT    = 22;
+  const MINI_STAGGER = 0.45;   // seconds between one arriving and the next
+  const HUNT_APART   = 1200;   // px/s² of shove between two bodies too close together
+
+  // Every body on the stage, whatever put it there. Stepped and drawn in one place
+  // so a mini spawned by the idle watch behaves exactly like one the round dealt.
+  const prowlers = [];
+
+  // The round's own clock, not the event's: a body is here for the whole round.
+  function huntStays() { return roundT < ROUND_MIN || roundT + HUNT_EXIT <= roundLen; }
+
+  // Somewhere else to stand: away from where it is now, away from the other bodies,
+  // and not on top of the prize cube either — a payout parked inside a hunter is a
+  // payout that cannot legally be taken, and these events publish no pocket to move
+  // it to. The inset is generous: a body that aims at the last 30px of the arena
+  // only arrives there with momentum it has to dump into the wall, and a hunter that
+  // stops dead is a hunter that stops looking heavy.
+  function hunterSpot(from, size, self) {
+    const m = size / 2 + 36;
+    let best = null;
+    for (let i = 0; i < 8; i++) {
+      const p = { x: rand(m, W - m), y: rand(m, H - m) };
+      let d = Math.hypot(p.x - from.x, p.y - from.y);
+      if (orb) d = Math.min(d, 1.5 * Math.hypot(p.x - (orb.x + orb.w / 2), p.y - (orb.y + orb.h / 2)));
+      for (const u of prowlers) {
+        if (u === self) continue;                // it is allowed to leave itself
+        d = Math.min(d, 1.3 * Math.hypot(p.x - u.pos.x, p.y - u.pos.y));
+      }
+      if (!best || d > best.d) best = { p, d };
+      if (d > 240) break;                        // good enough, stop looking
+    }
+    return best.p;
+  }
+
+  function spawnHunterBody() {
+    return pushCube({
+      x: -9e4, y: -9e4, w: 0, h: 0, vx: 0, vy: 0,
+      hunter: true, charge: 0, ghost: true, dead: false, shade: 1,
+      step(c) { return !c.dead; }
+    });
+  }
+
+  function stepHunterShot(c, dt) {
+    if (c.spent) return false;         // something else took it — see the siege
+    c.t += dt;
+    if (c.t < c.home) {
+      // Turn-rate-limited homing: it bends onto the marker rather than snapping to
+      // it, which is what makes a late sidestep worth more than an early one.
+      const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+      const want = Math.atan2(player.y - cy, player.x - cx);
+      let a = Math.atan2(c.vy, c.vx);
+      const d = Math.atan2(Math.sin(want - a), Math.cos(want - a));
+      a += clamp(d, -HUNT_TURN * dt, HUNT_TURN * dt);
+      c.vx = Math.cos(a) * c.sp;
+      c.vy = Math.sin(a) * c.sp;
+    } else {
+      // Committed: the heading it had when the clock ran out, and then gone.
+      const sp = c.sp + (HUNT_DASH - c.sp) * ease(clamp((c.t - c.home) / HUNT_PUSH, 0, 1));
+      const m = Math.hypot(c.vx, c.vy) || 1;
+      c.vx = c.vx / m * sp;
+      c.vy = c.vy / m * sp;
+    }
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+    return !(c.x + c.w < -90 || c.x > W + 90 || c.y + c.h < -90 || c.y > H + 90);
+  }
+
+  function fireHunterShot(u, ang) {
+    const s = u.shotSize;
+    sfx('shot');               // every cube that leaves a muzzle, boss or mini or escort
+    return pushCube({
+      x: u.pos.x - s / 2, y: u.pos.y - s / 2, w: s, h: s,
+      vx: Math.cos(ang) * u.track, vy: Math.sin(ang) * u.track,
+      shot: true, t: 0, sp: u.track, home: u.home, shade: 1,
+      step: stepHunterShot
+    });
+  }
+
+  // A body, wherever it came from: it outlines, swells, prowls and fires until the
+  // round is done with it, then folds itself away.
+  function makeHunterUnit(o) {
+    return {
+      mini: !!o.mini,
+      size: o.size, speed: o.speed, shots: o.shots, volley: o.volley,
+      track: o.track, home: o.home,
+      // The spread is fixed, so the gap between neighbours closes as the volley grows:
+      // a bigger volley is a denser one, not a wider one. Four shots thrown as wide as
+      // three would put the outermost pair 0.45 rad off aim, far enough that they fly
+      // past rather than bend on — a shotgun, which is not what this thing is.
+      fan: o.fan === undefined ? HUNT_FAN / Math.max(1, o.shots - 1) : o.fan,
+      shotSize: o.shotSize === undefined ? HUNT_SHOT : o.shotSize,
+      warn: o.warn === undefined ? HUNT_WARN : o.warn,
+      // A held body never charges and never fires: it prowls, it is solid, and that
+      // is all. Only the siege deals one — see the siege section for what the
+      // shield and the crack in it are for.
+      hold: !!o.hold, shield: o.shield ? 1 : 0, crack: 0, flash: 0,
+      t: 0, ph: 'warn', k: 0, alive: true,
+      pos: { x: o.x, y: o.y }, v: { x: 0, y: 0 },
+      tgt: { x: o.x, y: o.y }, aimT: HUNT_AIM,
+      body: null,
+      // The first volley is deliberately not on the same beat as the next body's.
+      fireT: o.volley * (o.fire0 === undefined ? 0.8 : o.fire0),
+      salvo: 0, salvoT: 0, aimA: 0,
+      layout() {
+        const s = this.size * this.k;
+        this.body.w = s; this.body.h = s;
+        this.body.x = this.pos.x - s / 2;
+        this.body.y = this.pos.y - s / 2;
+        this.body.ghost = this.k < 0.4;          // harmless while it swells
+        this.body.charge = this.charge();
+        this.body.decoy = this.hold;             // drawn cold, because it never fires
+      },
+      // How lit the core is: nothing for most of the gap between volleys, then a
+      // rising tell over the last HUNT_CHARGE of it, held while the volley leaves.
+      charge() {
+        if (this.ph !== 'live' || this.hold) return 0;
+        if (this.salvo > 0) return 1;
+        return clamp(1 - this.fireT / HUNT_CHARGE, 0, 1);
+      },
+      // Prowling: the same critically damped steering the closing box's pocket
+      // uses, so it arcs between spots instead of sliding on rails. It carries on
+      // through the fold-away, because a body that stops dead the instant its round
+      // is over stops looking like it weighs anything.
+      prowl(dt) {
+        this.aimT -= dt;
+        if (this.aimT <= 0) {
+          this.aimT = HUNT_AIM * rand(0.7, 1.3);
+          this.tgt = hunterSpot(this.pos, this.size, this);
+        }
+        const dx = this.tgt.x - this.pos.x, dy = this.tgt.y - this.pos.y;
+        const w = HUNT_STEER;
+        this.v.x += (dx * w * w - 2 * w * this.v.x) * dt;
+        this.v.y += (dy * w * w - 2 * w * this.v.y) * dt;
+        // …and a shove apart from anything standing too close, because two bodies
+        // in a heap is one body with two rates of fire. Picking clear spots is not
+        // enough on its own: it says nothing about what happens on the way to one,
+        // and a spot is only re-picked every couple of seconds. A unit still waiting
+        // out its outline counts, so a body is moved off a square that is about to
+        // have another hunter in it rather than the new one arriving inside it.
+        for (const u of prowlers) {
+          if (u === this) continue;
+          const ox = this.pos.x - u.pos.x, oy = this.pos.y - u.pos.y;
+          const gap = Math.hypot(ox, oy) || 1;
+          // Far enough apart that two *squares* cannot overlap, which takes more
+          // room than two circles would: the worst case is corner to corner.
+          const room = (this.size + u.size) * 0.75;
+          if (gap < room) {
+            // Inverse, not linear: gentle where they are merely near each other, and
+            // stiff enough close in to beat the spring above, which can be pulling a
+            // body towards a spot on the far side of another one.
+            const push = HUNT_APART * (room / gap - 1) * dt;
+            this.v.x += ox / gap * push;
+            this.v.y += oy / gap * push;
+          }
+        }
+        const vm = Math.hypot(this.v.x, this.v.y);
+        if (vm > this.speed) { this.v.x *= this.speed / vm; this.v.y *= this.speed / vm; }
+        this.pos.x += this.v.x * dt;
+        this.pos.y += this.v.y * dt;
+        // A backstop, not a wall to bounce off. The pocket of the closing box is
+        // ground you have to stand on, so it is held strictly inside the arena;
+        // this is a thing to stay away from, so it is allowed to hang over an edge
+        // rather than dumping its momentum into one and stopping dead. The target
+        // inset means it should never get this far anyway.
+        const m = Math.max(12, this.size / 2 - 28);
+        const bx = clamp(this.pos.x, m, W - m), by = clamp(this.pos.y, m, H - m);
+        if (bx !== this.pos.x) { this.pos.x = bx; this.v.x = 0; }
+        if (by !== this.pos.y) { this.pos.y = by; this.v.y = 0; }
+        // And the same treatment for each other: the shove above is a force, and a
+        // force can be out-run. A body pulled towards a spot on the far side of
+        // another one settles wherever the two cancel out, which is closer in than
+        // the shove was aiming for — near enough to read as one hunter with two
+        // rates of fire. So the overlap is simply undone, sliding clear along
+        // whichever axis is the shorter way out, the same way the arena edge is
+        // backed up rather than trusted to the steering. With the shove doing the
+        // real work this is a pixel or two at a time, not a jump.
+        for (const u of prowlers) {
+          if (u === this) continue;
+          const half = (this.size + u.size) / 2;
+          const ox = this.pos.x - u.pos.x, oy = this.pos.y - u.pos.y;
+          const overX = half - Math.abs(ox), overY = half - Math.abs(oy);
+          if (overX <= 0 || overY <= 0) continue;
+          // Half a pixel past touching, not exactly touching: landing on the contact
+          // distance leaves the next frame's subtraction deciding by rounding error
+          // whether these two are clear, and a pair that grazes for a second reads as
+          // a pair that is stuck together.
+          if (overX < overY) { this.pos.x += (ox < 0 ? -overX - 0.5 : overX + 0.5); this.v.x = 0; }
+          else               { this.pos.y += (oy < 0 ? -overY - 0.5 : overY + 0.5); this.v.y = 0; }
+        }
+      },
+      update(dt) {
+        this.t += dt;
+        if (this.ph === 'warn') {
+          if (this.t >= this.warn) {
+            this.ph = 'live';
+            this.body = spawnHunterBody();
+            this.layout();
+            // The cue goes with the body, not the outline: the pair of a mini round
+            // outline together and only swell in 0.45 s apart, so firing on the
+            // outline would stack both copies on one frame and sound like one.
+            sfx('hunter');
+          }
+          return true;
+        }
+        this.prowl(dt);
+        if (this.ph === 'live') {
+          this.k = Math.min(1, this.k + dt / HUNT_IN);
+          // Volleys. The aim is taken once, when the volley starts, and the shots
+          // leave as a fan off it — they do their own homing from there, so the fan
+          // is only about not stacking two cubes on one another, which is why it is
+          // divided up rather than piled on. A mini fires one shot, so for a mini the
+          // fan never comes up at all.
+          if (this.hold) {
+            // Held: no volley to run, and nothing to telegraph. It is only ever a
+            // thing standing in the arena — which in the siege is the whole job.
+          } else if (this.salvo > 0) {
+            this.salvoT -= dt;
+            if (this.salvoT <= 0) {
+              const i = this.shots - this.salvo;
+              fireHunterShot(this, this.aimA + (i - (this.shots - 1) / 2) * this.fan);
+              this.salvo--;
+              this.salvoT = HUNT_SPACE;
+            }
+          } else {
+            // The charge cue rides the visual tell exactly: the core starts lighting and
+            // the ring starts closing HUNT_CHARGE out from the volley, and this is that
+            // same moment in sound. The file runs a second against a 0.6 s tell, so its
+            // tail carries on under the shots it announced, which is what a charge going
+            // off is meant to sound like. It goes on the crossing rather than on
+            // `charge() > 0` so that one volley gets one cue and not one a frame.
+            const lit = this.fireT <= HUNT_CHARGE;
+            this.fireT -= dt;
+            if (!lit && this.fireT <= HUNT_CHARGE) sfx('charge');
+            if (this.fireT <= 0 && this.k >= 1) {
+              this.salvo = this.shots;
+              this.salvoT = 0;
+              this.fireT = this.volley;
+              this.aimA = Math.atan2(player.y - this.pos.y, player.x - this.pos.x);
+            }
+          }
+          if (!huntStays()) this.ph = 'out';
+        } else {
+          this.k -= dt / HUNT_EXIT;
+          if (this.k <= 0) return this.gone();
+        }
+        this.layout();
+        return true;
+      },
+      // Off the stage for good, whether it folded away on the clock or the round
+      // was cut short under it.
+      gone() {
+        if (this.body) this.body.dead = true;
+        this.alive = false;
+        return false;
+      },
+      draw() {
+        if (this.ph === 'warn') {
+          const a = 0.25 + 0.6 * Math.abs(Math.sin(this.t * 11));
+          ctx.strokeStyle = `rgba(255,92,92,${a})`;
+          ctx.setLineDash([9, 7]);
+          ctx.lineWidth = 3;
+          ctx.strokeRect(this.pos.x - this.size / 2, this.pos.y - this.size / 2, this.size, this.size);
+          ctx.setLineDash([]);
+          ctx.lineWidth = 1;
+          return;
+        }
+        // The muzzle line: where the next volley is aimed, drawn while the core
+        // charges. The shots home anyway, so hiding the aim would buy nothing but
+        // a cheap hit — and this is the one thing that says *now*.
+        const ch = this.charge();
+        if (ch > 0 && this.salvo === 0) {
+          const a = Math.atan2(player.y - this.pos.y, player.x - this.pos.x);
+          ctx.strokeStyle = `rgba(255,92,92,${(0.10 + 0.40 * ch).toFixed(3)})`;
+          ctx.setLineDash([7, 9]);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(this.pos.x, this.pos.y);
+          ctx.lineTo(this.pos.x + Math.cos(a) * 1200, this.pos.y + Math.sin(a) * 1200);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.lineWidth = 1;
+        }
+        // …and a ring closing in on the body as the volley comes due
+        if (ch > 0) {
+          const r = this.size * (1.5 - 0.45 * ch);
+          ctx.strokeStyle = `rgba(255,92,92,${(0.35 * ch).toFixed(3)})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(this.pos.x, this.pos.y, r, 0, TAU);
+          ctx.stroke();
+          ctx.lineWidth = 1;
+        }
+        // A held body's shield, which is the whole puzzle of the siege, so it is
+        // drawn as a thing being worn away: a closed ring while it holds, its arc
+        // eaten back as you stand with it, and a white flash when it swallows a shot
+        // that would otherwise have counted. Once it is gone the body is ringed in
+        // dashed amber instead — the colour the rest of the arena uses for *now*.
+        if (this.hold && this.ph !== 'warn') {
+          const r = this.size * 0.85;
+          if (this.shield > 0) {
+            const left = 1 - this.crack;
+            ctx.strokeStyle = `rgba(76,194,255,${(0.30 + 0.45 * left).toFixed(3)})`;
+            ctx.lineWidth = 2 + 2 * left;
+            ctx.beginPath();
+            ctx.arc(this.pos.x, this.pos.y, r, -Math.PI / 2, -Math.PI / 2 + TAU * left);
+            ctx.stroke();
+          } else {
+            const beat = 0.5 + 0.5 * Math.sin(elapsed * 9);
+            ctx.strokeStyle = `rgba(255,182,76,${(0.35 + 0.45 * beat).toFixed(3)})`;
+            ctx.lineWidth = 3;
+            ctx.setLineDash([6, 6]);
+            ctx.beginPath();
+            ctx.arc(this.pos.x, this.pos.y, r, 0, TAU);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+          if (this.flash > 0) {
+            const f = this.flash / SIEGE_FLASH;
+            ctx.strokeStyle = `rgba(226,240,255,${f.toFixed(3)})`;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(this.pos.x, this.pos.y, r + 12 * (1 - f), 0, TAU);
+            ctx.stroke();
+          }
+          ctx.lineWidth = 1;
+        }
+      }
+    };
+  }
+
+  function addProwler(o) {
+    const u = makeHunterUnit(o);
+    prowlers.push(u);
+    return u;
+  }
+
+  // One small hunter, standing where the others are not. `more` is for the odd caller
+  // that wants the same body with something switched off — the siege's decoy is this
+  // with `hold`.
+  function addMini(warn, T, more) {
+    const p = hunterSpot({ x: W / 2, y: H / 2 }, MINI_SIZE, null);
+    return addProwler(Object.assign({
+      mini: true, x: p.x, y: p.y, size: MINI_SIZE, speed: MINI_SPEED, warn,
+      shots: 1, shotSize: MINI_SHOT,
+      volley: Math.max(1.7, MINI_VOLLEY - 0.25 * T),
+      track: MINI_TRACK + 22 * T,
+      home: MINI_HOME + 0.1 * T,
+      fire0: rand(0.45, 1)          // out of step with each other from the start
+    }, more));
+  }
+
+  function stepProwlers(dt) {
+    for (let i = prowlers.length - 1; i >= 0; i--) {
+      if (!prowlers[i].update(dt)) prowlers.splice(i, 1);
+    }
+  }
+
+  function clearProwlers() {
+    for (const u of prowlers) u.gone();
+    prowlers.length = 0;
+  }
+
+  // The boss: one big body, a fanned volley, and the whole round to itself.
+  function makeHunter() {
+    const T = tier();
+    const unit = addProwler({
+      x: W / 2, y: H * 0.3, size: HUNT_SIZE, speed: HUNT_SPEED,
+      shots:  3 + T,                             // four at cycle 2, where it is first met
+      volley: Math.max(1.25, HUNT_VOLLEY - 0.2 * T),
+      track:  HUNT_TRACK + 26 * T,
+      home:   HUNT_HOME + 0.1 * T
+    });
+    // The event is a handle on the unit rather than the thing itself: the body is
+    // stepped with every other body, and the wave lasts exactly as long as it does.
+    return {
+      quiet: true, units: [unit],
+      shots: unit.shots, volley: unit.volley, track: unit.track, home: unit.home,
+      update() { return unit.alive; }
+    };
+  }
+
+  // The round: two small bodies, arriving one after the other so the stage fills up
+  // rather than appearing all at once, and staying for the whole round like a boss.
+  function makeMinis() {
+    const T = tier();
+    const units = [];
+    for (let i = 0; i < MINI_COUNT; i++) units.push(addMini(HUNT_WARN + i * MINI_STAGGER, T));
+    return {
+      quiet: true, units,
+      shots: 1, volley: units[0].volley, track: units[0].track, home: units[0].home,
+      update() { return units.some(u => u.alive); }
+    };
+  }
+
+  // --- the siege: what a hunter boss round actually is ---
+  // Both of the hunter's rounds are this one fight, and it is the one fight in the
+  // game that is not about dodging for a living. The hunter opens by swallowing the
+  // prize cube, and with the cube inside it the arena's whole bargain is off: there
+  // is nothing to stand near, so nothing pays, and the multiplier sits at zero for
+  // the duration. What is left is a puzzle, with the cube narrating it from inside
+  // the thing holding it. Round 10 is where it is learned and round 20 is the same
+  // fight with the screws turned (see makeSiege) � the last round asks nothing new
+  // of a player who solved the first one, only more of it.
+  //
+  // The loop: every so often a small hunter arrives that never fires a shot, wearing
+  // a shield nothing you have could open — you have no shot. Standing with it wears
+  // the shield through. Once it is open the decoy is just a body the boss's own aim
+  // can find, and since the boss aims at the marker, getting it to shoot the decoy
+  // means putting the decoy between you and it. A decoy that takes a boss shot
+  // collapses, and takes one of the boss's three lives with it. Three of those and
+  // the cube is out.
+  //
+  // The round has no clock: `makeSiege` gives it a length it cannot reach, so the
+  // wave never times out and no body ever folds away on the clock, and *winning* is
+  // what puts `roundT` at the end of it. There is no rescue cube either — the
+  // rescue is a race against the round's clock, and this round has not got one.
+  const SIEGE_LIVES  = 3;        // hits in the boss, one per decoy it shoots
+  // The five numbers that separate round 20 from round 10, each of them a quarter
+  // turn rather than a doubling: one more shot to be baited into, coming round a
+  // little sooner, and a decoy that has to be held closer, for longer, and lets go
+  // of what you did quicker. Dealt as a pair rather than off `tier()` because the
+  // siege is only ever met at those two rounds, so a curve through them would be
+  // three quarters invention.
+  const SIEGE_SHOTS  = 3;        // …and its volley: smaller than a cycle-4 boss volley
+                               // would be, because this fight has no end in sight and
+                               // the player has a second job to do during it
+  const SIEGE_SHOTS_2  = 4;
+  const SIEGE_VOLLEY = 2.2;      // seconds between volleys, unhurried for the same reason
+  const SIEGE_VOLLEY_2 = 2.0;
+  const SIEGE_FIRST  = 2.4;      // seconds before the first decoy
+  const SIEGE_GAP    = 2.8;      // …and after one has gone down
+  const SIEGE_BAND   = 150;      // px from a decoy that counts as standing with it
+  const SIEGE_BAND_2 = 135;
+  const SIEGE_UNLOCK = 4.5;      // seconds of that to wear its shield through
+  const SIEGE_UNLOCK_2 = 5.5;
+  const SIEGE_RELOCK = 0.3;      // …and the share of it that closes again per second away
+  const SIEGE_RELOCK_2 = 0.4;
+  const SIEGE_FLASH  = 0.3;      // seconds of white where a shield ate a shot
+  const SIEGE_GRAB   = 0.55;     // seconds of the cube being dragged inside
+  const SIEGE_WON    = 3.6;      // the beat after the third life, cube loose in it
+  const SIEGE_HINT   = 9;        // seconds before the cube repeats the same instruction
+  let siege = null;           // all of the above, while a hunter boss round runs
+
+  // The hunter has a different job in a boss slot than it would as an ordinary
+  // round: there it comes for you, here it comes for the cube. Read off the slot
+  // rather than the round number, so both of its rounds play the same fight.
+  function isSiege(n) {
+    const cfg = cfgAt(n);
+    return !!cfg && cfg.name === 'hunter' && n % BOSS_EVERY === 0;
+  }
+
+  // Dealt here rather than by a branch in `startWave`, which has no business
+  // knowing about either of them.
+  function makeHunterRound() { return isSiege(roundNo) ? makeSiege() : makeHunter(); }
+
+  function makeSiege() {
+    const T = tier();
+    // The round's clock goes out of the window here rather than in `beginRound`: the
+    // siege ends when the boss does, so it is given a length nothing can reach and
+    // everything that reads the round clock then does the right thing by itself — no
+    // wave times out, no body folds away, and no rescue cube is offered. Winning is
+    // what moves the clock to the end (see freeOrb).
+    roundLen = 1e9;
+    // Second time round, in every sense: the same fight, one cycle of the difficulty
+    // table later, with its own five numbers turned up as well as the two the boss
+    // shares with every other hunter.
+    const late = T >= 3;
+    const boss = addProwler({
+      x: W / 2, y: H * 0.32, size: HUNT_SIZE, speed: HUNT_SPEED,
+      shots: late ? SIEGE_SHOTS_2 : SIEGE_SHOTS,
+      volley: late ? SIEGE_VOLLEY_2 : SIEGE_VOLLEY,
+      track: HUNT_TRACK + 26 * T, home: HUNT_HOME + 0.1 * T
+    });
+    siege = { boss, lives: SIEGE_LIVES, decoy: null, wait: SIEGE_FIRST,
+               caged: false, grab: 0, won: 0, freed: false, done: false,
+               said: '', hint: 0, late,
+               band:   late ? SIEGE_BAND_2   : SIEGE_BAND,
+               unlock: late ? SIEGE_UNLOCK_2 : SIEGE_UNLOCK,
+               relock: late ? SIEGE_RELOCK_2 : SIEGE_RELOCK };
+    return {
+      quiet: true, units: [boss],
+      shots: boss.shots, volley: boss.volley, track: boss.track, home: boss.home,
+      lives: SIEGE_LIVES, band: siege.band, unlock: siege.unlock,
+      relock: siege.relock, late,
+      update: stepSiege
+    };
+  }
+
+  function stepSiege(dt) {
+    const f = siege;
+    if (!f) return false;
+    // The cube goes in as soon as there is something to go into: the boss outlines
+    // first like every other body, and the grab lands on the frame it turns solid.
+    if (!f.caged && !f.freed && f.boss.body) {
+      f.caged = true;
+      f.grab = SIEGE_GRAB;
+      if (orb) { orb.caged = true; orb.ghost = true; orb.fright = 1; orb.reaim = 0; }
+      quipSay('caught');
+    }
+    if (f.grab > 0) f.grab = Math.max(0, f.grab - dt);
+
+    // The victory beat: boss folding away, cube loose, ledger open again. When it
+    // runs out the event is finished, and the round ends on the next frame because
+    // freeOrb already moved the clock to the end.
+    if (f.won > 0) {
+      f.won -= dt;
+      if (f.won <= 0) { f.done = true; return false; }
+      return true;
+    }
+
+    const d = f.decoy;
+    let near = false;
+    if (!d || !d.alive || d.ph === 'out') {
+      // Nothing out there: wait, then send one. One at a time — two decoys would be
+      // two shields to wear down and no reason to pick either.
+      f.decoy = null;
+      f.wait -= dt;
+      if (f.wait <= 0) f.decoy = addMini(HUNT_WARN, tier(), { hold: true, shield: 1 });
+    } else if (d.ph === 'live') {
+      if (d.flash > 0) d.flash = Math.max(0, d.flash - dt);
+      // Standing with it, which is the only thing that opens the shield. Ghosting
+      // does not count, the same way it earns nothing off the rescue cube: the work
+      // has to be done while you can be hit for doing it.
+      near = invuln <= 0 && Math.hypot(player.x - d.pos.x, player.y - d.pos.y) < f.band;
+      if (d.shield > 0) {
+        d.crack = clamp(d.crack + (near ? dt / f.unlock : -dt * f.relock), 0, 1);
+        if (d.crack >= 1) d.shield = 0;
+      }
+      // …and the boss's own shots, against the body it sent out. Nothing else in the
+      // arena can touch a hunter, which is why the round is built around its volleys.
+      const b = d.body;
+      if (b && !b.dead && !b.ghost) {
+        for (const s of cubes) {
+          if (!s.shot || s.spent) continue;
+          if (s.x + s.w < b.x || s.x > b.x + b.w || s.y + s.h < b.y || s.y > b.y + b.h) continue;
+          s.spent = true;
+          if (d.shield > 0) { d.flash = SIEGE_FLASH; continue; }   // eaten, and wasted
+          hurtBoss(d);
+          break;
+        }
+      }
+    }
+
+    // One instruction at a time, and always the next one that is any use: wait for a
+    // decoy, go and stand with it, hold there, then get behind it. Repeated on a long
+    // timer rather than said once, because a round with no clock is a round a player
+    // can be lost in — but only ever the current one, so the cube is reading out the
+    // situation rather than a manual.
+    const want = !f.decoy || f.decoy.ph === 'warn' ? 'hintwait'
+               : f.decoy.shield > 0 ? (near ? 'hintclose' : 'hintfollow')
+               : 'hintbait';
+    f.hint -= dt;
+    if (want !== f.said || f.hint <= 0) {
+      if (quipSay(want)) { f.said = want; f.hint = SIEGE_HINT; }
+    }
+    return true;
+  }
+
+  // A decoy took a shot with its shield open: it collapses, and the boss is down one.
+  function hurtBoss(d) {
+    const f = siege;
+    d.ph = 'out';                  // it folds away like any other body, only sooner
+    f.decoy = null;
+    f.wait = SIEGE_GAP;
+    f.lives = Math.max(0, f.lives - 1);
+    f.said = '';                   // whatever it was explaining has been done
+    sfx('clear');                  // the same small fanfare a cleared round gets
+    shake = 0.3;
+    if (f.lives <= 0) { freeOrb(); return; }
+    banner = { text: 'HUNTER HIT', good: true, t: 1.6, t0: 1.6,
+               sub: f.lives + (f.lives === 1 ? ' life left' : ' lives left') };
+    quipSay('bosshurt');
+  }
+
+  // Three lives gone. The cube is let out, the scoring comes back on for the few
+  // seconds that are left, and the round is moved to its own end — which is what
+  // folds the boss away, since every body on the stage stays for as long as the
+  // round does and this round was given one it could not otherwise reach.
+  function freeOrb() {
+    const f = siege;
+    f.won = SIEGE_WON;
+    f.freed = true;
+    f.caged = false;
+    if (orb) { orb.caged = false; orb.ghost = false; orb.fright = 1; orb.reaim = 0; }
+    mult = 1; graceT = 0;
+    roundT = roundLen;
+    banner = { text: 'CUBE SAVED', good: true, tint: '192,124,255', t: 3.2, t0: 3.2,
+               sub: 'the hunter is done' };
+    quipSay('freed');
+  }
+
+  // Inside the cage. The spring that steers the cube everywhere else is replaced by
+  // the boss's own position, so it goes where the boss goes and no amount of flying
+  // about will shake it loose. The first half-second is slower: that is the grab, and
+  // a cube that snapped to the centre would read as one that had been switched off.
+  function stepCaged(c, dt) {
+    const f = siege;
+    const b = f && f.boss.body ? f.boss : null;
+    const tx = b ? b.pos.x : c.x + c.w / 2, ty = b ? b.pos.y : c.y + c.h / 2;
+    const k = Math.min(1, dt * (f && f.grab > 0 ? 7 : 20));
+    c.x += (tx - c.w / 2 - c.x) * k;
+    c.y += (ty - c.h / 2 - c.y) * k;
+    c.vx = 0; c.vy = 0;
+    // It stays wide-eyed the whole time it is in there, with a wobble on it, because
+    // `fright` is the channel the drawing already reads for alarm.
+    c.fright = 0.55 + 0.25 * Math.abs(Math.sin(elapsed * 3.4));
+    c.spin = (c.spin || 0) + dt * 0.6;
+    return true;
+  }
+
+  // The boss's three lives, along the top edge where the round clock usually goes.
+  // This round has no clock, so the bar is the fight instead — and it fills as the
+  // boss loses, which is the direction that bar moves in every other round.
+  function drawSiegeHud() {
+    const n = SIEGE_LIVES, w = 54, gap = 10, y = 16, h = 7;
+    const x0 = W / 2 - (n * w + (n - 1) * gap) / 2;
+    for (let i = 0; i < n; i++) {
+      const x = x0 + i * (w + gap);
+      ctx.fillStyle = i < siege.lives ? 'rgba(255,92,92,0.75)' : 'rgba(255,92,92,0.12)';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = 'rgba(255,92,92,0.40)';
+      ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1);
+    }
+    ctx.textAlign = 'center';
+    ctx.font = '700 10px ui-monospace,SFMono-Regular,Consolas,monospace';
+    ctx.fillStyle = 'rgba(255,92,92,0.62)';
+    ctx.fillText('☠  HUNTER', W / 2, y - 6);
+    ctx.textAlign = 'left';
+  }
+
+  // --- the idle watch ---
+  // The prize cube is the only thing that pays, and the game's whole bargain is that
+  // chasing the payout and dodging the round pull against each other. A player who
+  // simply refuses the bargain — parking in a corner and surviving — is playing a
+  // different, duller game, and nothing in the arena used to argue with them.
+  //
+  // So: spend more than half of an ordinary round out of the payout band and the
+  // arena sends one small hunter to find you, and it stays until the round is over.
+  // It is not announced anywhere. The threshold is a share of the round rather than
+  // a fixed count of seconds so that the rule reads the same in a short round as in
+  // a long one, with a floor under it because the marker starts every round away
+  // from the cube and half of four seconds is not neglect. Boss rounds are left
+  // alone: they have their own problem on the stage already.
+  const IDLE_MIN  = 8;         // seconds of neglect before the watch fires at all
+  const IDLE_PART = 0.5;       // …and it must be more than this share of the round
+  const IDLE_LEFT = 4.5;       // and there has to be this much round left to bother
+  const LONELY_AT = 0.45;      // how far into the neglect the cube starts saying so
+  const LONELY_FLASH = 1.8;    // seconds it says it out loud once company is on its way
+  let awayT = 0;               // seconds of this round spent out of the band
+  let idler = null;            // the one it sent, while the round lasts
+  let lonely = 0;              // 0–1: how loudly the cube is asking, right now
+  let lonelyT = 0;             // seconds left of saying it out loud
+
+  // How close the cube is to calling for company: whichever of the two thresholds
+  // is nearer, and flatly zero the moment the watch could not fire anyway, so it
+  // never sulks about something that is not going to happen. Both terms matter —
+  // early in a round the share is met from the first frame and the floor is what is
+  // counting down, late in a long one it is the other way about.
+  function idleNear() {
+    if (idler || !live || !roundCfg() || roundCfg().boss) return 0;
+    if (roundT + IDLE_LEFT > roundLen || prowlers.length >= MINI_MAX) return 0;
+    const part = roundT * IDLE_PART;
+    return clamp(Math.min(awayT / IDLE_MIN, part > 0 ? awayT / part : 1), 0, 1);
+  }
+
+  function idleWatch(dt, away) {
+    if (away) awayT += dt;
+    if (lonelyT > 0) lonelyT -= dt;
+    lonely = idleNear();
+    if (idler || !live || !roundCfg() || roundCfg().boss) return;
+    if (awayT < IDLE_MIN || awayT <= roundT * IDLE_PART) return;
+    if (roundT + IDLE_LEFT > roundLen) return;      // no room left to be worth it
+    if (prowlers.length >= MINI_MAX) return;        // the mini round is already full
+    idler = addMini(HUNT_WARN, tier());
+    lonely = 1;
+    lonelyT = LONELY_FLASH;                         // and now the cube says it out loud
+    quipSay('lonely');                              // …twice over, in fact
+  }
+
+  const EVENT_MAKERS = {
+    rocket: makeRockets, wall: makeWall, corners: makeCorners,
+    spiral: makeSpiral, box: makeBox,
+    clock: makeClock, minis: makeMinis, half: makeHalf,
+    hunter: makeHunterRound
+  };
+
+  // ---------- round sequencing ----------
+  function startWave() {
+    const cfg = roundCfg();
+    activeEvent = EVENT_MAKERS[cfg.name]();
+    activeEvent.name = cfg.name;
+    waveNo++;
+    // A wave with something specific to say — the barrage names its pattern — gets
+    // a line of its own, but not on top of the round's own banner.
+    if (activeEvent.sub && waveNo > 1) {
+      banner = { text: cfg.label, sub: activeEvent.sub, t: 1.4, t0: 1.4 };
+    }
+  }
+
+  function beginRound(n) {
+    roundNo = n;
+    const cfg = roundCfg();
+    roundT = 0;
+    roundLen = rand(ROUND_MIN, ROUND_MAX);
+    waveGap = 0;              // the first wave is telegraphed straight away
+    waveNo = 0;
+    live = true;
+    siege = null;
+    lastWallDir = null;
+    cornerCard = false;                     // corner rounds always open at the corners
+    clearProwlers();
+    // Clockwork comes with an escort, and it is dealt here rather than by the event
+    // because the dial re-arms several times in a round: one per wave would be a
+    // swarm. Same animal the mini round and the idle watch use, so it prowls, folds
+    // away with the round, and counts against the same ceiling they do.
+    if (cfg.name === 'clock') addMini(HUNT_WARN, tier());
+    awayT = 0; idler = null;                // the watch starts over every round
+    lonely = 0; lonelyT = 0;
+    clearHeart();
+    heartWait = 0; heartUsed = false;      // one fresh chance per round
+    banner = cfg.boss
+      ? { text: 'BOSS  ·  ' + cfg.label, icon: '☠', tint: '255,92,92', t: 2.8, t0: 2.8,
+          sub: 'round ' + n + ' — ' + cfg.sub }
+      : { text: 'ROUND ' + n + '  ·  ' + cfg.label, sub: cfg.sub, t: 2.4, t0: 2.4 };
+    // A hunter boss round is a different round under the same name, and it says so.
+    if (isSiege(n)) banner.sub = 'round ' + n + ' — it wants the cube, not you';
+    // The hunter gets its own theme, and only the hunter: the closing box is a round
+    // you solve, the hunter is a round that comes after you. Switched on the round
+    // rather than in the breather, so the banner and the music land together.
+    switchTrack(cfg.name === 'hunter' ? bgmBoss : bgm);
+    endSaid = false;                        // one "nearly there" per round, at most
+    if (n === 1) quipSay('firstround');     // the cube introduces itself, more or less
+    renderRound();
+  }
+
+  // One wave at a time, back to back, until the round has had its 20–30 s. A wave
+  // only starts if there is room left for it, so the round ends on time instead of
+  // running long on a last-second barrage.
+  function runRound(dt) {
+    if (!live) {
+      breakT -= dt;
+      if (breakT <= 0) beginRound(roundNo + 1);
+      return;
+    }
+    roundT += dt;
+    // The cube's running commentary on the finish line. Said while the last wave is
+    // still up rather than at the boundary, where the CLEAR banner already says it —
+    // and never in a boss round, which has its own thing to say when it is over.
+    // `endSaid` allows it once per round; the moment's own cooldown then thins that
+    // out to roughly every other round, because a finish line remarked on twenty
+    // times in one game is the cube reading out the HUD.
+    if (!endSaid && roundT + QUIP_SOON >= roundLen && !roundCfg().boss) {
+      endSaid = true;
+      quipSay('roundend');
+    }
+    if (activeEvent) {
+      if (!activeEvent.update(dt)) {
+        activeEvent = null;
+        waveGap = roundCfg().beat * (1 - 0.15 * tier());
+      }
+      return;
+    }
+    const cfg = roundCfg();
+    // Half a wave's worth of room is enough — better a round that runs a couple of
+    // seconds long than one that ends in several seconds of dead air. ROUND_MIN is
+    // a hard floor, so a short target can't be cut even shorter by that rounding.
+    if (roundT < ROUND_MIN || roundT + cfg.tail * 0.55 <= roundLen) {
+      waveGap -= dt;
+      if (waveGap <= 0) startWave();
+      return;
+    }
+    live = false;
+    sfx('clear');                // every round that is got through, the twentieth included
+    const next = cfgAt(roundNo + 1);
+    // A boss gets a longer breather, because it gets announced in it.
+    breakT = next && next.boss ? BOSS_BREAK : ROUND_BREAK;
+    clearHeart();                // a rescue is this round's offer and no longer
+    if (roundNo >= MAX_ROUNDS) { cleared = true; endRound(); return; }
+    // The banner is for the round just finished. What is coming is the breather's
+    // own business — drawBossWarn names it, so nothing is said twice.
+    banner = { text: cfg.boss ? 'BOSS DOWN' : 'ROUND ' + roundNo + ' CLEAR', good: true,
+               t: 2.0, t0: 2.0,
+               sub: next.boss ? 'brace yourself' : 'next: ' + next.label };
+    // Surviving a boss and being about to meet one are the two loudest moments in the
+    // game, so they outrank whatever the cube was muttering about a moment ago.
+    if (cfg.boss) quipSay('bossdown');
+    else if (next.boss) quipSay('bossnext');
+    renderRound();
+  }
+
+  // ---------- loop ----------
+  function update(dt) {
+    elapsed += dt;
+    timerEl.textContent = elapsed.toFixed(2);
+
+    if (shake > 0) shake = Math.max(0, shake - dt);
+    if (banner) { banner.t -= dt; if (banner.t <= 0) banner = null; }
+    if (multPop) { multPop.t -= dt; if (multPop.t <= 0) multPop = null; }
+
+    runRound(dt);
+    if (state !== STATE.PLAYING) return;    // the twentieth round just ended
+
+    // Hunter bodies are stepped here rather than by whatever event dealt them, so
+    // that one the idle watch adds to an ordinary round is the same animal as one
+    // the mini-hunter round dealt. They keep folding away through the breather too,
+    // which is why this sits outside the `live` test in runRound.
+    stepProwlers(dt);
+
+    const rate = activeEvent && activeEvent.quiet ? 0 : ambientRate();
+    const d = difficulty();
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      if (rate > 0) spawnAmbient(d);
+      spawnTimer += d.interval / (rate || 1);
+    }
+
+    let hit = false;
+    let hitOrb = false, hitHeart = false;   // …and what did it, which the cube has views on
+    let reach = Infinity;                   // gap to the prize cube
+    let rescue = Infinity;                  // gap to the rescue cube, if one is out
+    let graze = Infinity;                   // …and the nearest thing that could have hurt
+    for (let i = cubes.length - 1; i >= 0; i--) {
+      const c = cubes[i];
+      if (!stepCube(c, dt)) { cubes.splice(i, 1); continue; }
+      const g = surfaceGap(c);
+      if (c.orb) reach = g;
+      if (c.heart) rescue = g;
+      if (g <= 0 && !c.ghost) {
+        hit = true;
+        if (c.orb) hitOrb = true; else if (c.heart) hitHeart = true;
+      } else if (!c.ghost && !c.orb && !c.heart && g < graze) graze = g;
+    }
+
+    if (devMode) hit = false;               // the marker is just visiting
+
+    // Ghosting holds while a cube still covers the marker, so one bad spot
+    // can't chew through every heart at once.
+    if (invuln > 0) {
+      invuln -= dt;
+      if (invuln <= 0) invuln = hit ? 0.12 : 0;
+    } else if (hit) {
+      takeHit();
+      if (state !== STATE.PLAYING) return;
+      // Running into the one cube that pays you, or into the one that came to give a
+      // heart back, deserves its own remark. Otherwise it depends how bad things are.
+      quipSay(hitOrb ? 'crash' : hitHeart ? 'crashheart' : lives === 1 ? 'lastlife' : 'hit');
+    } else if (graze < QUIP_GRAZE) {
+      quipSay('nearmiss');
+    }
+
+    // ---- scoring ----
+    // Only the prize cube pays. Everything else in the arena is just in the way.
+    //
+    // …and while the siege's hunter is holding the cube, nothing pays at all: no
+    // band to stand in, no multiplier, no points. The ledger shuts as the round opens
+    // and stays shut until the cube is out, which is the round saying what it is
+    // about — this one is not a scoring round, it is a rescue.
+    const shut = !!siege && !siege.freed;
+    prox = invuln > 0 || shut ? 0 : clamp(1 - reach / NEAR_BAND, 0, 1);
+    if (shut) {
+      mult = 0; graceT = 0; multPop = null; streakTop = 0;
+    } else if (prox > 0) {
+      graceT = 0;
+      const before = mult;
+      mult = Math.min(MULT_MAX, mult + MULT_GAIN * Math.pow(prox, MULT_CURVE) * dt);
+      if (Math.floor(mult) > Math.floor(before)) multPop = { text: '×' + Math.floor(mult), t: 0.7 };
+      if (mult > bestMult) bestMult = mult;
+      if (mult > streakTop) streakTop = mult;
+    } else {
+      graceT += dt;
+      if (graceT > MULT_GRACE) {
+        const before = mult;
+        mult = Math.max(1, mult - MULT_DECAY * dt);
+        // Only mourn a streak that was worth something — a ×1.3 sliding back to ×1 is
+        // not a loss, it is a rounding error.
+        if (mult <= 1 && before > 1 && streakTop >= QUIP_STREAK) {
+          quipSay('multlost');
+          streakTop = 0;
+        }
+      }
+    }
+    if (!shut) {
+      score += (SURVIVE_PPS + PROX_PPS * prox) * mult * dt;
+      scoreEl.textContent = fmt(score);
+    }
+
+    // ---- the cube's other observations ----
+    // None of the multiplier's three are said in the siege: a cube being held at
+    // gunpoint nagging you about your rate of return would be the wrong joke, and it
+    // has better things to say in there anyway.
+    if (!shut) {
+      // Reaching the cap, once per visit to it: the reset threshold sits a whole
+      // multiplier below the cap so brushing the ceiling cannot chatter.
+      if (mult >= MULT_MAX - 1e-6) {
+        if (!maxSaid && quipSay('maxed')) maxSaid = true;
+      } else if (mult < MULT_MAX - 1) maxSaid = false;
+
+      // A long unbroken hug, and its opposite: a long stretch of scoring nothing. Both
+      // timers reset on firing rather than latching, so each needs earning again.
+      if (prox > 0) { hugT += dt; flatT = 0; } else hugT = 0;
+      if (hugT >= QUIP_HUG) { hugT = 0; quipSay('hug'); }
+      if (mult < 1.5) { flatT += dt; if (flatT >= QUIP_FLAT) { flatT = 0; quipSay('idlemult'); } }
+    }
+
+    // Not moving at all. Three pixels of slack, because a hand resting on a mouse
+    // still twitches and that is not the same as walking away.
+    if (Math.abs(player.x - stillX) + Math.abs(player.y - stillY) > 3) {
+      stillX = player.x; stillY = player.y; stillT = 0;
+    } else if ((stillT += dt) >= QUIP_STILL) { stillT = 0; quipSay('stalled'); }
+
+    stepQuip(dt);
+
+    // …and the other side of that ledger: time spent nowhere near the payout is
+    // noticed. NEAR_BAND, not `prox`, because this is about where the marker is —
+    // ghosting after a hit should not read as refusing the cube.
+    idleWatch(dt, reach >= NEAR_BAND);
+
+    // The rescue pays no points at all — a heart is the whole prize.
+    runHeart(dt, rescue);
+
+    trail.push({ x: player.x, y: player.y });
+    if (trail.length > 14) trail.shift();
+  }
+
+  function multColor(m) {
+    // 1× accent blue → mid amber → hot red at the cap
+    const p = clamp((m - 1) / (MULT_MAX - 1), 0, 1);
+    const stops = [[76, 194, 255], [255, 182, 76], [255, 92, 92]];
+    const seg = p < 0.5 ? 0 : 1;
+    const k = p < 0.5 ? p / 0.5 : (p - 0.5) / 0.5;
+    const a = stops[seg], b = stops[seg + 1];
+    return [0, 1, 2].map(i => Math.round(a[i] + (b[i] - a[i]) * k));
+  }
+
+  // The payout, painted. Brightness follows the same exponential curve the
+  // multiplier does, so what you see *is* the rate — and because it dissolves into
+  // the backdrop instead of ending at a line, there is no threshold to memorise.
+  // Deliberately a circle over a rounded rect: even the shape of the falloff is a
+  // little vague at the outside, where it is worth nothing anyway.
+  function orbAura(c) {
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    const R = NEAR_BAND + c.w / 2;
+    const g = ctx.createRadialGradient(cx, cy, c.w * 0.45, cx, cy, R);
+    const peak = 0.30 + prox * 0.16;         // leans in a little as you close
+    for (let i = 0; i <= 8; i++) {
+      const s = i / 8;
+      g.addColorStop(s, `rgba(192,124,255,${(peak * Math.pow(1 - s, MULT_CURVE)).toFixed(4)})`);
+    }
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, TAU);
+    ctx.fill();
+  }
+
+  // The rescue cube's reach, painted the same way — except this one has its edge
+  // marked on it. The prize hides its threshold on purpose; a rescue you could
+  // only find by guessing would just be a third way to lose a heart.
+  function heartAura(c) {
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    const R = HEART_BAND + c.w / 2;
+    const lit = (c.near ? 1 : 0.5) * (c.doom ? 0.4 : 1);
+    const tone = heartTone(c);
+    const g = ctx.createRadialGradient(cx, cy, c.w * 0.45, cx, cy, R);
+    for (let i = 0; i <= 8; i++) {
+      const s = i / 8;
+      g.addColorStop(s, `rgba(${tone},${(0.22 * lit * Math.pow(1 - s, 1.7)).toFixed(4)})`);
+    }
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, TAU);
+    ctx.fill();
+
+    ctx.strokeStyle = `rgba(${tone},${(c.near ? 0.6 : 0.28) * (c.doom ? 0.45 : 1)})`;
+    ctx.setLineDash([6, 9]);
+    ctx.lineWidth = c.near ? 2 : 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, TAU);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineWidth = 1;
+  }
+
+  // Gold while the rescue is still winnable, amber once the round is close to
+  // outlasting it, ash grey once it cannot be finished at all — one place, so the
+  // body, its reach and its count never disagree about how the offer is doing.
+  function heartTone(c) {
+    if (c.doom) return '150,158,170';
+    return c.slack < HEART_TIGHT ? '255,150,60' : '255,210,63';
+  }
+
+  // The rescue cube itself, wearing its countdown. The ring is how much of the
+  // count is already banked, so the cube alone tells you both how long you have to
+  // hold on and whether you are close enough for it to be running down.
+  function drawHeart(c) {
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    const done = clamp(1 - c.left / HEART_COUNT, 0, 1);
+    const tone = heartTone(c);
+    // While it is thinking about leaving it flashes; while it is actually leaving it
+    // fades out where it stands, so a player looking away for a second still sees the
+    // gold go rather than wondering where it went.
+    const fret = !c.doom && c.slack < HEART_TIGHT
+      ? 0.55 + 0.45 * Math.abs(Math.sin(elapsed * 9)) : 1;
+    ctx.save();
+    ctx.globalAlpha = (c.born > 0 ? 1 - c.born / HEART_FADE : 1) *
+                      (c.doom ? Math.max(0, c.leave / HEART_LEAVE) : fret);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.fillStyle = `rgb(${tone})`;
+    ctx.shadowColor = `rgb(${tone})`;
+    ctx.shadowBlur = c.doom ? 0 : (c.near ? 30 : 15);
+    ctx.fillRect(c.x, c.y, c.w, c.h);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(28,20,0,0.85)';
+    ctx.font = '700 21px ui-sans-serif,system-ui,sans-serif';
+    ctx.fillText(c.doom ? '♡' : '♥', cx, cy + 1);
+
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = `rgba(${tone},0.18)`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, c.w * 0.95, 0, TAU);
+    ctx.stroke();
+    if (done > 0) {
+      ctx.strokeStyle = `rgb(${tone})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, c.w * 0.95, -Math.PI / 2, -Math.PI / 2 + TAU * done);
+      ctx.stroke();
+    }
+
+    // The count is outlined, because it has to be readable sitting on top of a grey
+    // cube, a red rocket or the middle of a slab. Once the round has beaten it the
+    // number is no longer the point, so it says what actually happened instead.
+    // Ash grey is the right colour for the cube, and the wrong one for lettering sat
+    // inside a dark outline, so a doomed count is written in a much paler grey than the
+    // body wearing it.
+    const ink = c.doom ? '226,231,240' : tone;
+    const txt = String(Math.ceil(c.left));
+    ctx.font = `700 ${c.near && !c.doom ? 19 : 16}px ui-monospace,SFMono-Regular,Consolas,monospace`;
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = 'rgba(8,11,15,0.75)';
+    ctx.strokeText(txt, cx, c.y - 30);
+    ctx.fillStyle = c.near && !c.doom ? `rgb(${ink})` : `rgba(${ink},${c.doom ? 1 : 0.78})`;
+    ctx.shadowColor = `rgb(${tone})`;
+    ctx.shadowBlur = c.near && !c.doom ? 12 : 0;
+    ctx.fillText(txt, cx, c.y - 30);
+    // …and once the round has beaten it, the count is struck through and named: the
+    // number is still the truth about what the cube wants, it is just no longer
+    // something that can be paid, and that is worth a word rather than a shade of grey.
+    if (c.doom) {
+      const half = ctx.measureText(txt).width / 2 + 5;
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = `rgba(${ink},0.95)`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx - half, c.y - 30);
+      ctx.lineTo(cx + half, c.y - 30);
+      ctx.stroke();
+      ctx.font = '700 15px ui-monospace,SFMono-Regular,Consolas,monospace';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(8,11,15,0.8)';
+      ctx.strokeText('NO TIME', cx, c.y - 52);
+      ctx.fillStyle = `rgb(${ink})`;
+      ctx.fillText('NO TIME', cx, c.y - 52);
+    }
+    ctx.restore();
+  }
+
+  // The prize cube itself; its glow is laid down earlier, under the hazards.
+  function drawOrb(c) {
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+
+    // --- the cube's mood ---
+    // It is the only thing on the stage that is on your side, and it is worth it
+    // reading that way: it watches the marker wherever the marker goes, brightens and
+    // squints when you actually come and stand on it, flinches at near misses, and
+    // blinks when nothing much is happening. None of that is stored — joy is the
+    // payout band, sulk is the idle watch, the flinch is the one number stepOrb keeps,
+    // and the blink runs off the game clock — so the cube has a mood without the game
+    // having to run a mood.
+    const joy = clamp(prox, 0, 1);
+    const sad = clamp((lonely - LONELY_AT) / (1 - LONELY_AT), 0, 1);
+    const fright = clamp(c.fright || 0, 0, 1);
+    // Breathing, faster when it is pleased; squashed flat by a fright; leaning into
+    // whichever way it is running. A body that never deformed would read as a sprite
+    // being moved about rather than a thing moving itself.
+    const breathe = 1 + 0.05 * Math.sin(elapsed * (2.2 + 3 * joy));
+    const sx = breathe * (1 + 0.22 * fright), sy = breathe * (1 - 0.18 * fright);
+    const tilt = clamp((c.vx || 0) / 1400, -0.16, 0.16) * (1 - fright);
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(tilt);
+    ctx.scale(sx, sy);
+    ctx.fillStyle = fright > 0.35 ? '#dcb0ff' : '#c07cff';
+    ctx.shadowColor = '#c07cff';
+    ctx.shadowBlur = 22 + 16 * joy;
+    ctx.fillRect(-c.w / 2, -c.h / 2, c.w, c.h);
+    ctx.shadowBlur = 0;
+
+    // The eye. Where it looks is the marker — which doubles as a pointer back at you
+    // in a crowded arena — how wide it is open is how alarmed it is, and a cube that
+    // has given up on you looks away instead, and downwards.
+    const dx = player.x - cx, dy = player.y - cy;
+    const m = Math.hypot(dx, dy) || 1;
+    const look = Math.min(1, m / 120) * c.w * 0.17;   // a far marker is looked further at
+    const away = sad > 0.5 ? -0.6 : 1;                // …until it stops looking at all
+    const ex = (dx / m) * look * away;
+    const ey = (dy / m) * look * away + sad * c.h * 0.10;
+    // Blink: a short close every few seconds, the gap jittered off the blink's own
+    // index so it never metronomes.
+    const bi = Math.floor(elapsed / 3.2);
+    const jit = Math.abs(Math.sin(bi * 12.9898) * 43758.5453) % 1;
+    const blink = clamp(1 - Math.abs(elapsed - (bi * 3.2 + 0.6 + jit * 2)) / 0.075, 0, 1);
+    const ew = c.w * (0.36 + 0.10 * fright - 0.04 * joy);
+    const eh = c.h * (0.36 + 0.10 * fright - 0.16 * joy) * (1 - 0.92 * blink);
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.fillRect(ex - ew / 2, ey - eh / 2, ew, Math.max(1.5, eh));
+    ctx.restore();
+
+    // …and when you are standing right on it, it throws off a few flecks. Which is
+    // also the quickest read there is that the payout is running at its full rate.
+    if (joy > 0.5) {
+      for (let i = 0; i < 3; i++) {
+        const ph = (elapsed * 1.7 + i / 3) % 1;
+        const a = (joy - 0.5) * 2 * (1 - ph);
+        ctx.fillStyle = `rgba(226,200,255,${a.toFixed(3)})`;
+        ctx.fillRect(cx + Math.sin(i * 2.3 + elapsed * 3) * c.w * 0.5 - 2,
+                     cy - c.h * 0.7 - ph * 26 - 2, 4, 4);
+      }
+    }
+
+    // a slowly spinning bracket, so it still reads as *the* cube in a crowd
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(c.spin || 0);
+    ctx.strokeStyle = 'rgba(226,200,255,0.85)';
+    ctx.lineWidth = 2;
+    const r = c.w * (0.92 + 0.07 * joy), L = c.w * 0.34;
+    for (let i = 0; i < 4; i++) {
+      ctx.rotate(Math.PI / 2);
+      ctx.beginPath();
+      ctx.moveTo(-r, -r + L);
+      ctx.lineTo(-r, -r);
+      ctx.lineTo(-r + L, -r);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.lineWidth = 1;
+
+    // …and, in the siege, the cage it is being held in: a tight red cell with bars
+    // across it, so a purple cube glowing in the middle of a dark hunter reads as a
+    // cube that has been taken rather than one that happens to be standing there.
+    if (c.caged) {
+      const beat = 0.6 + 0.4 * Math.abs(Math.sin(elapsed * 2.6));
+      const r = c.w * 0.78;
+      ctx.strokeStyle = `rgba(255,92,92,${(0.55 * beat).toFixed(3)})`;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cx - r, cy - r, r * 2, r * 2);
+      ctx.beginPath();
+      for (let i = -1; i <= 1; i++) {
+        ctx.moveTo(cx + i * r * 0.55, cy - r);
+        ctx.lineTo(cx + i * r * 0.55, cy + r);
+      }
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+
+    // …and, when it has been left alone long enough that the arena is about to do
+    // something about it, the cube says so. The cue belongs on the cube rather than
+    // in the HUD: it is the cube that is being ignored, and what it is warning about
+    // will arrive wherever you happen to be standing instead. Amber while it is only
+    // building, red for the moment company is actually on its way — the same colour
+    // language every other telegraph uses.
+    if (lonely > LONELY_AT || lonelyT > 0) {
+      const sent = lonelyT > 0;
+      const k = sent ? Math.min(1, lonelyT / 0.5) : (lonely - LONELY_AT) / (1 - LONELY_AT);
+      const beat = 0.45 + 0.55 * Math.abs(Math.sin(elapsed * (sent ? 15 : 4 + 6 * k)));
+      // While it is only building, the ring closes in as the patience runs out: it
+      // starts at the edge of the band the marker is not in and ends up against the
+      // cube itself. Once company has been sent for it goes the other way — one ping
+      // thrown outwards and fading, because by then it is an announcement rather than
+      // a request, and something is on its way to make the point.
+      const ping = sent ? 1 - lonelyT / LONELY_FLASH : 0;
+      const a = (sent ? 1 - ping * ping : k) * beat;
+      const col = sent ? '255,92,92' : '255,182,76';
+      const R = sent ? c.w * 0.8 + NEAR_BAND * 0.9 * ease(ping)
+                     : c.w * 0.8 + (NEAR_BAND - c.w * 0.3) * (1 - k);
+      ctx.strokeStyle = `rgba(${col},${(a * 0.8).toFixed(3)})`;
+      ctx.lineWidth = sent ? 3 : 2;
+      ctx.setLineDash([5, 8]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, TAU);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineWidth = 1;
+      ctx.textAlign = 'center';
+      ctx.font = `700 ${(11 + 5 * k).toFixed(1)}px ui-monospace,SFMono-Regular,Consolas,monospace`;
+      ctx.fillStyle = `rgba(${col},${a.toFixed(3)})`;
+      ctx.fillText('LONELY', cx, c.y - 16 - 6 * k);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // A speech bubble, anchored to the prize cube, because the cube is the one talking.
+  // The same words centred in the HUD would read as the game's own voice, which is a
+  // different and far less funny thing — a line only lands as sarcasm if you can see
+  // who it came from. Above the cube where there is room, flipped underneath when the
+  // cube is up against the top edge, and clamped inside the arena either way so a
+  // remark is never half off the board. Purple-tinted and thin-stroked, so it reads as
+  // part of the cube rather than as a warning.
+  function drawQuip() {
+    if (!quip || !orb || state !== STATE.PLAYING) return;
+    // pops open quickly, fades out slowly
+    const a = ease(clamp((quip.t0 - quip.t) / 0.14, 0, 1)) * clamp(quip.t / 0.45, 0, 1);
+    if (a < 0.02) return;
+
+    ctx.save();
+    ctx.font = '600 14px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const bw = Math.min(W - 28, ctx.measureText(quip.text).width + 22);
+    const bh = 28, tail = 8, r = 8;
+    const cx = orb.x + orb.w / 2;
+    // The LONELY cue owns the strip just above the cube, so a line said while it is up
+    // sits clear of it rather than through it.
+    const lift = (lonely > LONELY_AT || lonelyT > 0) ? 30 : 0;
+    const up = orb.y - lift - tail - bh > 8;
+    const bx = clamp(cx - bw / 2, 10, W - 10 - bw);
+    const by = clamp(up ? orb.y - lift - tail - bh : orb.y + orb.h + lift + tail,
+                     8, H - 8 - bh);
+
+    // The pointer only gets drawn when the bubble really is above or below the cube;
+    // once the clamp has shoved it sideways a tail would aim at nothing.
+    const tx = clamp(cx, bx + r + 6, bx + bw - r - 6);
+    const near = Math.abs(tx - cx) < 2 && (up ? by + bh <= orb.y : by >= orb.y + orb.h);
+
+    ctx.beginPath();
+    ctx.moveTo(bx + r, by);
+    ctx.lineTo(bx + bw - r, by);
+    ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + r);
+    ctx.lineTo(bx + bw, by + bh - r);
+    ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - r, by + bh);
+    if (near && up) {                       // tail out of the bottom edge
+      ctx.lineTo(tx + 6, by + bh);
+      ctx.lineTo(tx, by + bh + tail);
+      ctx.lineTo(tx - 6, by + bh);
+    }
+    ctx.lineTo(bx + r, by + bh);
+    ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - r);
+    ctx.lineTo(bx, by + r);
+    if (near && !up) {                      // …or out of the top one
+      ctx.lineTo(tx - 6, by);
+      ctx.lineTo(tx, by - tail);
+      ctx.lineTo(tx + 6, by);
+    }
+    ctx.quadraticCurveTo(bx, by, bx + r, by);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(16,22,29,${(a * 0.88).toFixed(3)})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(192,124,255,${(a * 0.55).toFixed(3)})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = `rgba(233,222,255,${a.toFixed(3)})`;
+    ctx.fillText(quip.text, bx + bw / 2, by + bh / 2 + 0.5, bw - 14);
+    ctx.restore();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.lineWidth = 1;
+  }
+
+  function drawCube(c) {
+    const base = 154 * c.shade;
+    if (c.orb) { drawOrb(c); return; }
+    if (c.heart) { drawHeart(c); return; }
+    if (c.rocket) {
+      // rocket: a bright streak trailing behind a red-hot cube
+      const m = Math.hypot(c.vx, c.vy) || 1;
+      const ux = c.vx / m, uy = c.vy / m;
+      const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+      const g = ctx.createLinearGradient(cx - ux * 190, cy - uy * 190, cx, cy);
+      g.addColorStop(0, 'rgba(255,70,70,0)');
+      g.addColorStop(1, 'rgba(255,120,90,0.55)');
+      ctx.strokeStyle = g;
+      ctx.lineWidth = c.h * 0.8;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx - ux * 190, cy - uy * 190);
+      ctx.lineTo(cx, cy);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+
+      ctx.fillStyle = '#ff5c5c';
+      ctx.shadowColor = '#ff5c5c';
+      ctx.shadowBlur = 24;
+      ctx.fillRect(c.x, c.y, c.w, c.h);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillRect(c.x + c.w * 0.3, c.y + c.h * 0.3, c.w * 0.4, c.h * 0.4);
+      return;
+    }
+
+    if (c.hunter) {
+      // The boss body: a heavy dark block with a core that lights as it charges, so
+      // it reads as a thing that shoots rather than as one more cube in the traffic.
+      if (c.w < 1) return;
+      const cx = c.x + c.w / 2, cy = c.y + c.h / 2, ch = c.charge || 0;
+      // A decoy is the same body painted cold: it never charges and never fires, and
+      // the arena's colour language says as much before the shield does. Red is the
+      // promise of a shot, and this one has none to make.
+      const tone = c.decoy ? '76,194,255' : '255,92,92';
+      ctx.fillStyle = c.decoy ? '#122634' : '#2b1519';
+      ctx.shadowColor = c.decoy ? '#4cc2ff' : '#ff5c5c';
+      ctx.shadowBlur = 18 + 16 * ch;
+      ctx.fillRect(c.x, c.y, c.w, c.h);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = `rgba(${tone},0.85)`;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(c.x + 1.5, c.y + 1.5, c.w - 3, c.h - 3);
+      // seams, so a boss the size of nine cubes still reads as being made of them
+      ctx.strokeStyle = `rgba(${tone},0.22)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 1; i < 3; i++) {
+        ctx.moveTo(c.x + c.w * i / 3, c.y);        ctx.lineTo(c.x + c.w * i / 3, c.y + c.h);
+        ctx.moveTo(c.x, c.y + c.h * i / 3);        ctx.lineTo(c.x + c.w, c.y + c.h * i / 3);
+      }
+      ctx.stroke();
+      const k = c.w * (0.13 + 0.07 * ch);
+      ctx.fillStyle = `rgba(${tone},${(0.35 + 0.6 * ch).toFixed(3)})`;
+      ctx.shadowColor = c.decoy ? '#4cc2ff' : '#ff5c5c';
+      ctx.shadowBlur = 10 + 22 * ch;
+      ctx.fillRect(cx - k, cy - k, k * 2, k * 2);
+      ctx.shadowBlur = 0;
+      return;
+    }
+
+    if (c.shot) {
+      // A shot, with a streak behind it: amber while it is still tracking you and
+      // can be out-turned, red-hot and long once it has committed and cannot.
+      const cmt = c.t >= c.home;
+      const m = Math.hypot(c.vx, c.vy) || 1;
+      const ux = c.vx / m, uy = c.vy / m;
+      const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+      const len = cmt ? 160 : 48;
+      const g = ctx.createLinearGradient(cx - ux * len, cy - uy * len, cx, cy);
+      g.addColorStop(0, 'rgba(255,92,92,0)');
+      g.addColorStop(1, cmt ? 'rgba(255,120,90,0.55)' : 'rgba(255,182,76,0.40)');
+      ctx.strokeStyle = g;
+      ctx.lineWidth = c.h * 0.7;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx - ux * len, cy - uy * len);
+      ctx.lineTo(cx, cy);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+
+      ctx.fillStyle = cmt ? '#ff5c5c' : '#ffb64c';
+      ctx.shadowColor = ctx.fillStyle;
+      ctx.shadowBlur = cmt ? 22 : 12;
+      ctx.fillRect(c.x, c.y, c.w, c.h);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillRect(c.x + c.w * 0.32, c.y + c.h * 0.32, c.w * 0.36, c.h * 0.36);
+      return;
+    }
+
+    ctx.fillStyle = `rgb(${base | 0},${(base + 8) | 0},${(base + 18) | 0})`;
+    ctx.fillRect(c.x, c.y, c.w, c.h);
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    ctx.fillRect(c.x, c.y, c.w, 3);
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(c.x, c.y + c.h - 3, c.w, 3);
+
+    if (c.slab) {
+      // seams so a big slab still reads as a block of cubes
+      ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+      ctx.beginPath();
+      for (let x = c.x + 50; x < c.x + c.w; x += 50) { ctx.moveTo(x + .5, c.y); ctx.lineTo(x + .5, c.y + c.h); }
+      for (let y = c.y + 50; y < c.y + c.h; y += 50) { ctx.moveTo(c.x, y + .5); ctx.lineTo(c.x + c.w, y + .5); }
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.strokeRect(c.x + .5, c.y + .5, c.w - 1, c.h - 1);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    if (shake > 0) {
+      const s = shake * 14;
+      ctx.translate(rand(-s, s), rand(-s, s));
+    }
+
+    // grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.035)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 45; x < W; x += 45) { ctx.moveTo(x + .5, 0); ctx.lineTo(x + .5, H); }
+    for (let y = 45; y < H; y += 45) { ctx.moveTo(0, y + .5); ctx.lineTo(W, y + .5); }
+    ctx.stroke();
+
+    // how far through the round you are, along the top edge
+    if (state === STATE.PLAYING && roundNo >= 1) {
+      // In the siege the bar is the boss instead of the clock — it has no clock.
+      const p = siege ? (SIEGE_LIVES - siege.lives) / SIEGE_LIVES
+                       : clamp(live ? roundT / roundLen : 1, 0, 1);
+      ctx.fillStyle = !live ? 'rgba(255,182,76,0.22)'
+                    : isBoss(roundNo) ? 'rgba(255,92,92,0.40)' : 'rgba(192,124,255,0.32)';
+      ctx.fillRect(0, 0, W * p, 3);
+    }
+
+    // A boss round is framed in red for its whole length, and the breather before
+    // one is spent saying so in the middle of the arena, where you are looking.
+    if (state === STATE.PLAYING && live && isBoss(roundNo)) drawBossFrame();
+    if (state === STATE.PLAYING && siege) drawSiegeHud();
+
+    // event telegraphs sit under the cubes
+    if (activeEvent && activeEvent.draw) activeEvent.draw();
+    for (const u of prowlers) u.draw();      // …and so do the hunters' outlines
+
+    // Three passes, because the prize cube's glow and its body want opposite ends
+    // of the stack: the glow washes over whatever it covers, so it goes under the
+    // hazards, while the cube itself goes over them so a slab can never hide it.
+    // The rescue cube is the same deal, for the same reason.
+    if (state === STATE.PLAYING) {
+      // No aura on a caged cube: the glow is the payout, and a held cube pays nothing.
+      for (const c of cubes) if (c.orb && !c.caged) orbAura(c);
+      if (heartCube) heartAura(heartCube);
+    }
+    for (const c of cubes) if (!c.orb && !c.heart) drawCube(c);
+    for (const c of cubes) if (c.orb || c.heart) drawCube(c);
+
+    // player trail
+    const tone = devMode ? '255,154,46' : '76,194,255';
+    for (let i = 0; i < trail.length; i++) {
+      const a = (i + 1) / trail.length;
+      ctx.fillStyle = `rgba(${tone},${a * 0.18})`;
+      ctx.beginPath();
+      ctx.arc(trail[i].x, trail[i].y, PLAYER_R * a * 0.8, 0, TAU);
+      ctx.fill();
+    }
+
+    // player
+    const dead = state === STATE.OVER;
+    ctx.globalAlpha = invuln > 0 ? 0.35 + 0.4 * Math.abs(Math.sin(invuln * 18)) : 1;
+    ctx.fillStyle = dead ? '#ff5c5c' : devMode ? '#ff9a2e' : '#4cc2ff';
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, PLAYER_R, 0, TAU);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, 3, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    if (state === STATE.PLAYING) {
+      // proximity halo: brightens as the marker closes on the prize cube
+      if (prox > 0) {
+        const [cr, cg, cb] = multColor(mult);
+        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${prox * 0.5})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, PLAYER_R + 10 + prox * 5, 0, TAU);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+
+      drawMultiplier();
+    }
+
+    // Over the cubes and the marker so a line is always readable, under the banner and
+    // the boss warning, which are the two things you actually need to read.
+    drawQuip();
+
+    if (state === STATE.PLAYING && !live && isBoss(roundNo + 1)) drawBossWarn();
+
+    // round banner
+    if (banner) {
+      const a = clamp(banner.t / 0.5, 0, 1) * clamp((banner.t0 - banner.t) / 0.25, 0, 1);
+      const tint = banner.tint || (banner.good ? '192,124,255' : '255,182,76');
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(${tint},${a})`;
+      ctx.font = '700 26px ui-monospace,SFMono-Regular,Consolas,monospace';
+      ctx.fillText((banner.icon || (banner.good ? '✔' : '⚠')) + '  ' + banner.text, W / 2, 58);
+      ctx.fillStyle = `rgba(230,237,243,${a * 0.6})`;
+      ctx.font = '13px ui-sans-serif,system-ui,sans-serif';
+      ctx.fillText(banner.sub, W / 2, 80);
+      ctx.textAlign = 'left';
+    }
+
+    ctx.restore();
+  }
+
+  // A red border for the whole of a boss round — the one piece of boss dressing
+  // that is still there twenty seconds in, when the banner has long gone.
+  function drawBossFrame() {
+    const p = 0.5 + 0.5 * Math.sin(elapsed * 2.4);
+    ctx.strokeStyle = `rgba(255,92,92,${(0.18 + 0.16 * p).toFixed(3)})`;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, W - 4, H - 4);
+    ctx.lineWidth = 1;
+  }
+
+  // Said during the breather, so a boss is never something you walk into.
+  function drawBossWarn() {
+    const next = cfgAt(roundNo + 1);
+    if (!next) return;
+    const p = 0.5 + 0.5 * Math.sin(elapsed * 7);
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(255,92,92,${(0.45 + 0.45 * p).toFixed(3)})`;
+    ctx.font = '700 44px ui-monospace,SFMono-Regular,Consolas,monospace';
+    ctx.fillText('☠  BOSS ROUND  ☠', W / 2, H / 2 - 4);
+    ctx.fillStyle = `rgba(230,237,243,${(0.4 + 0.25 * p).toFixed(3)})`;
+    ctx.font = '15px ui-sans-serif,system-ui,sans-serif';
+    ctx.fillText('round ' + (roundNo + 1) + ' · ' + next.label, W / 2, H / 2 + 26);
+    ctx.restore();
+  }
+
+  // The floating multiplier: sits beside the marker, grows, then fades out.
+  function drawMultiplier() {
+    // `shown`, not `live` — that name belongs to the round state
+    const shown = mult > 1.05;   // don't flash a pointless ×1.0 on first contact
+    if (!shown && !multPop) return;
+
+    const decaying = graceT > MULT_GRACE;
+    const [r, g, b] = multColor(mult);
+    // Capped out: the label breathes. Nothing else says "this is as good as it
+    // gets" without a number, and the number has stopped moving by then.
+    const maxed = mult >= MULT_MAX - 1e-6;
+    const breath = maxed ? 0.5 + 0.5 * Math.sin(elapsed * 9) : 0;   // 0…1 at the cap
+    const beat = maxed ? 0.94 + breath * 0.12 : 1;                  // ±6% of its size
+    const scale = (1 + clamp((mult - 1) / (MULT_MAX - 1), 0, 1) * 0.55) * beat;
+    const pop = multPop ? clamp(multPop.t / 0.7, 0, 1) : 0;
+
+    // keep the label on-screen when the marker hugs an edge
+    const flip = player.x > W - 96 ? -1 : 1;
+    const x = player.x + flip * 20;
+    const y = clamp(player.y - 16, 22, H - 12);
+
+    ctx.save();
+    ctx.textAlign = flip > 0 ? 'left' : 'right';
+    ctx.globalAlpha = shown
+      ? (decaying ? 0.35 + 0.35 * Math.abs(Math.sin(graceT * 14)) : 1)
+      : pop;
+
+    if (shown) {
+      ctx.font = `700 ${(15 * scale).toFixed(1)}px ui-monospace,SFMono-Regular,Consolas,monospace`;
+      ctx.shadowColor = `rgba(${r},${g},${b},0.9)`;
+      ctx.shadowBlur = 10 + pop * 16 + breath * 14;
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillText('×' + mult.toFixed(1), x, y);
+      ctx.shadowBlur = 0;
+
+      // grace fuse: shrinks while you are off the prize cube
+      const left = clamp(1 - graceT / MULT_GRACE, 0, 1);
+      if (left < 1) {
+        const bw = 34;
+        ctx.fillStyle = 'rgba(255,255,255,0.14)';
+        ctx.fillRect(flip > 0 ? x : x - bw, y + 5, bw, 3);
+        ctx.fillStyle = `rgba(${r},${g},${b},0.85)`;
+        ctx.fillRect(flip > 0 ? x : x - bw * left, y + 5, bw * left, 3);
+      }
+    }
+
+    // tier-up flourish floats up and away
+    if (multPop) {
+      ctx.globalAlpha = pop * 0.9;
+      ctx.font = `700 ${(16 + (1 - pop) * 10).toFixed(1)}px ui-monospace,SFMono-Regular,Consolas,monospace`;
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillText(multPop.text, x, y - 16 - (1 - pop) * 18);
+    }
+    ctx.restore();
+  }
+
+  function frame(now) {
+    if (!lastFrame) lastFrame = now;
+    const dt = Math.min((now - lastFrame) / 1000, 1 / 30);  // clamp after tab switches
+    lastFrame = now;
+    devTick(dt);                 // outside update(): the hold counts between rounds too
+    if (state === STATE.PLAYING) update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- boot ----------
+  try { nameInput.value = localStorage.getItem(NAME_KEY) || ''; } catch {}
+  renderLives();
+  renderBoard();
+  draw();
+  requestAnimationFrame(frame);
+  nameInput.focus();
+})();
+</script>
+</body>
+</html>

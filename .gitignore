@@ -1,0 +1,11 @@
+# machine-local Claude Code permissions and paths
+.claude/settings.local.json
+
+# generated: 7 MB of eyeball screenshots, remade by `py tools/shots.py`
+tools/shots/
+__pycache__/
+
+# scratch patch scripts (root only - tools/_edge.py is a real dependency) and staging
+/_*.py
+publish/
+*.zip

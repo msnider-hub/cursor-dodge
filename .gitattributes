@@ -1,0 +1,4 @@
+# This project mixes line endings on purpose and its tests assert on them:
+# index.html and tools/*.py are LF, README.md is CRLF. Let no clone, checkout or
+# commit rewrite a byte of any of it, whatever core.autocrlf happens to be set to.
+* -text
